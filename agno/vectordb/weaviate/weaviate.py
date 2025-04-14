@@ -62,10 +62,9 @@ class Weaviate(VectorDb):
 
         # Embedder setup
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.embedder.ollama import OllamaEmbedder
 
-            embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            embedder = OllamaEmbedder()
         self.embedder: Embedder = embedder
 
         # Search setup

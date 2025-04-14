@@ -51,10 +51,9 @@ class Clickhouse(VectorDb):
         # Embedder for embedding the document contents
         _embedder = embedder
         if _embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.embedder.ollama import OllamaEmbedder
 
-            _embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            _embedder = OllamaEmbedder()
         self.embedder: Embedder = _embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 

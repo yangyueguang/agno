@@ -25,10 +25,9 @@ class Cassandra(VectorDb):
             raise ValueError("Keyspace must be provided")
 
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.embedder.ollama import OllamaEmbedder
 
-            embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            embedder = OllamaEmbedder()
         self.table_name: str = table_name
         self.embedder: Embedder = embedder
         self.session = session

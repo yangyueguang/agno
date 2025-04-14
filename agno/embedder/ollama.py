@@ -35,7 +35,7 @@ except Exception as e:
 
 @dataclass
 class OllamaEmbedder(Embedder):
-    id: str = "openhermes"
+    id: str = "llama3.1:8b"
     dimensions: int = 4096
     host: Optional[str] = None
     timeout: Optional[Any] = None
