@@ -31,14 +31,14 @@ class MemoryManager(BaseModel):
         # Use the default Model (OpenAIChat) if no model is provided
         if self.model is None:
             try:
-                from agno.models.openai import OpenAIChat
+                from agno.models.ollama import Ollama
             except ModuleNotFoundError as e:
                 logger.exception(e)
                 logger.error(
                     "Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`."
                 )
                 exit(1)
-            self.model = OpenAIChat(id="gpt-4o")
+            self.model = Ollama()
 
         # Add tools to the Model
         self.add_tools_to_model(model=self.model)

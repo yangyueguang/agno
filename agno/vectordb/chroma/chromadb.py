@@ -13,7 +13,6 @@ except ImportError:
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -27,7 +26,7 @@ class ChromaDb(VectorDb):
         distance: Distance = Distance.cosine,
         path: str = "tmp/chromadb",
         persistent_client: bool = False,
-        reranker: Optional[Reranker] = None,
+        reranker = None,
         **kwargs,
     ):
         # Collection attributes
@@ -52,8 +51,7 @@ class ChromaDb(VectorDb):
         self.persistent_client: bool = persistent_client
         self.path: str = path
 
-        # Reranker instance
-        self.reranker: Optional[Reranker] = reranker
+        self.reranker = reranker
 
         # Chroma client kwargs
         self.kwargs = kwargs

@@ -26,11 +26,11 @@ export OPENAI_API_KEY=sk-xxxx
 ```
 ```python websearch_agent.py
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.ollama import Ollama
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=Ollama(),
     tools=[DuckDuckGoTools()],
     markdown=True
 )
@@ -40,10 +40,10 @@ agent.print_response("What's happening in New York?", stream=True)
 
 ```python
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.ollama import Ollama
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=Ollama(),
     description="You are an enthusiastic news reporter with a flair for storytelling!",
     markdown=True
 )
@@ -52,11 +52,11 @@ agent.print_response("Tell me about a breaking news story from New York.", strea
 
 ```python
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.ollama import Ollama
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=Ollama(),
     description="You are an enthusiastic news reporter with a flair for storytelling!",
     tools=[DuckDuckGoTools()],
     show_tool_calls=True,
@@ -67,14 +67,14 @@ agent.print_response("Tell me about a breaking news story from New York.", strea
 
 ```python
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.ollama import Ollama
 from agno.embedder.ollama import OllamaEmbedder
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=Ollama(),
     description="You are a Thai cuisine expert!",
     instructions=[
         "Search your knowledge base for Thai recipes.",
@@ -105,7 +105,7 @@ agent.print_response("What is the history of Thai curry?", stream=True)
 
 ```python
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.ollama import Ollama
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 from agno.team import Team
@@ -113,7 +113,7 @@ from agno.team import Team
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Ollama(),
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
     show_tool_calls=True,
@@ -123,7 +123,7 @@ web_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Ollama(),
     tools=[YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)],
     instructions="Use tables to display data",
     show_tool_calls=True,
@@ -133,7 +133,7 @@ finance_agent = Agent(
 agent_team = Team(
     mode="coordinate",
     members=[web_agent, finance_agent],
-    model=OpenAIChat(id="gpt-4o"),
+    model=Ollama(),
     success_criteria="A comprehensive financial news report with clear sections and data-driven insights.",
     instructions=["Always include sources", "Use tables to display data"],
     show_tool_calls=True,

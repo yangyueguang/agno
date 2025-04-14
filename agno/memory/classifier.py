@@ -19,14 +19,14 @@ class MemoryClassifier(BaseModel):
     def update_model(self) -> None:
         if self.model is None:
             try:
-                from agno.models.openai import OpenAIChat
+                from agno.models.ollama import Ollama
             except ModuleNotFoundError as e:
                 logger.exception(e)
                 logger.error(
                     "Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`."
                 )
                 exit(1)
-            self.model = OpenAIChat(id="gpt-4o")
+            self.model = Ollama()
 
     def get_system_message(self) -> Message:
         # -*- Return a system message for classification

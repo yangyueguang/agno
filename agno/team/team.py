@@ -3273,18 +3273,6 @@ class Team:
                 if reasoning_message is None:
                     log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
-            # Use Groq for reasoning
-            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id.lower():
-                from agno.reasoning.groq import get_groq_reasoning
-
-                reasoning_agent = self._get_reasoning_agent(self.reasoning_model)
-
-                reasoning_message = get_groq_reasoning(
-                    reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
             # Use OpenAI o3 for reasoning
             elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3"):
                 from agno.reasoning.openai import get_openai_reasoning
@@ -3431,19 +3419,6 @@ class Team:
                 if reasoning_message is None:
                     log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
-            # Use Groq for reasoning
-            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id.lower():
-                from agno.reasoning.groq import aget_groq_reasoning
-
-                reasoning_agent = self._get_reasoning_agent(self.reasoning_model)
-
-                reasoning_message = await aget_groq_reasoning(
-                    reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-            # Use OpenAI o3 for reasoning
             elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3"):
                 from agno.reasoning.openai import aget_openai_reasoning
 
@@ -3644,7 +3619,7 @@ class Team:
         # Set the default model
         if self.model is None:
             try:
-                from agno.models.openai import OpenAIChat
+                from agno.models.ollama import Ollama
             except ModuleNotFoundError as e:
                 log_exception(e)
                 log_error(
@@ -3654,7 +3629,7 @@ class Team:
                 exit(1)
 
             log_info("Setting default model to OpenAI Chat")
-            self.model = OpenAIChat(id="gpt-4o")
+            self.model = Ollama()
 
         # Update the response_format on the Model
         if self.response_model is None:
