@@ -7,7 +7,7 @@ from pydantic import BaseModel, ValidationError
 from agno.memory.summary import SessionSummary
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.utils.log import log_debug, log_info, logger
+
 
 
 class MemorySummarizer(BaseModel):
@@ -19,8 +19,8 @@ class MemorySummarizer(BaseModel):
             try:
                 from agno.models.ollama import Ollama
             except ModuleNotFoundError as e:
-                logger.exception(e)
-                logger.error(
+                print(e)
+                print(
                     "Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`."
                 )
                 exit(1)
@@ -86,10 +86,10 @@ class MemorySummarizer(BaseModel):
         message_pairs: List[Tuple[Message, Message]],
         **kwargs: Any,
     ) -> Optional[SessionSummary]:
-        log_debug("*********** MemorySummarizer Start ***********")
+        print("*********** MemorySummarizer Start ***********")
 
         if message_pairs is None or len(message_pairs) == 0:
-            log_info("No message pairs provided for summarization.")
+            print("No message pairs provided for summarization.")
             return None
 
         # Update the Model (set defaults, add logit etc.)
@@ -116,7 +116,7 @@ class MemorySummarizer(BaseModel):
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
         response = self.model.response(messages=messages_for_model)
-        log_debug("*********** MemorySummarizer End ***********")
+        print("*********** MemorySummarizer End ***********")
 
         # If the model natively supports structured outputs, the parsed value is already in the structured format
         if self.use_structured_outputs and response.parsed is not None and isinstance(response.parsed, SessionSummary):
@@ -135,10 +135,10 @@ class MemorySummarizer(BaseModel):
                         try:
                             session_summary = SessionSummary.model_validate_json(response.content)
                         except ValidationError as exc:
-                            logger.warning(f"Failed to validate session_summary response: {exc}")
+                            print(f"Failed to validate session_summary response: {exc}")
                 return session_summary
             except Exception as e:
-                logger.warning(f"Failed to convert response to session_summary: {e}")
+                print(f"Failed to convert response to session_summary: {e}")
         return None
 
     async def arun(
@@ -146,10 +146,10 @@ class MemorySummarizer(BaseModel):
         message_pairs: List[Tuple[Message, Message]],
         **kwargs: Any,
     ) -> Optional[SessionSummary]:
-        log_debug("*********** Async MemorySummarizer Start ***********")
+        print("*********** Async MemorySummarizer Start ***********")
 
         if message_pairs is None or len(message_pairs) == 0:
-            log_info("No message pairs provided for summarization.")
+            print("No message pairs provided for summarization.")
             return None
 
         # Update the Model (set defaults, add logit etc.)
@@ -176,7 +176,7 @@ class MemorySummarizer(BaseModel):
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
         response = await self.model.aresponse(messages=messages_for_model)
-        log_debug("*********** Async MemorySummarizer End ***********")
+        print("*********** Async MemorySummarizer End ***********")
 
         # If the model natively supports structured outputs, the parsed value is already in the structured format
         if self.use_structured_outputs and response.parsed is not None and isinstance(response.parsed, SessionSummary):
@@ -195,8 +195,8 @@ class MemorySummarizer(BaseModel):
                         try:
                             session_summary = SessionSummary.model_validate_json(response.content)
                         except ValidationError as exc:
-                            logger.warning(f"Failed to validate session_summary response: {exc}")
+                            print(f"Failed to validate session_summary response: {exc}")
                 return session_summary
             except Exception as e:
-                logger.warning(f"Failed to convert response to session_summary: {e}")
+                print(f"Failed to convert response to session_summary: {e}")
         return None

@@ -2,8 +2,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from agno.run.response import RunResponse
-from agno.utils.log import log_debug
+from agno.run import RunResponse
+
 
 
 class WorkflowRun(BaseModel):
@@ -24,7 +24,7 @@ class WorkflowMemory(BaseModel):
     def add_run(self, workflow_run: WorkflowRun) -> None:
         """Adds a WorkflowRun to the runs list."""
         self.runs.append(workflow_run)
-        log_debug("Added WorkflowRun to WorkflowMemory")
+        print("Added WorkflowRun to WorkflowMemory")
 
     def clear(self) -> None:
         """Clear the WorkflowMemory"""

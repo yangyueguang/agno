@@ -22,7 +22,7 @@ except ImportError:
 
 from agno.memory.db import MemoryDb
 from agno.memory.row import MemoryRow
-from agno.utils.log import log_debug, log_info, logger
+
 
 
 class SqliteMemoryDb(MemoryDb):
@@ -92,10 +92,10 @@ class SqliteMemoryDb(MemoryDb):
     def create(self) -> None:
         if not self.table_exists():
             try:
-                log_debug(f"Creating table: {self.table_name}")
+                print(f"Creating table: {self.table_name}")
                 self.table.create(self.db_engine, checkfirst=True)
             except Exception as e:
-                logger.error(f"Error creating table '{self.table_name}': {e}")
+                print(f"Error creating table '{self.table_name}': {e}")
                 raise
 
     def memory_exists(self, memory: MemoryRow) -> bool:
@@ -126,9 +126,9 @@ class SqliteMemoryDb(MemoryDb):
                 for row in result:
                     memories.append(MemoryRow(id=row.id, user_id=row.user_id, memory=eval(row.memory)))
         except SQLAlchemyError as e:
-            log_debug(f"Exception reading from table: {e}")
-            log_debug(f"Table does not exist: {self.table_name}")
-            log_debug("Creating table for future transactions")
+            print(f"Exception reading from table: {e}")
+            print(f"Table does not exist: {self.table_name}")
+            print("Creating table for future transactions")
             self.create()
         return memories
 
@@ -152,10 +152,10 @@ class SqliteMemoryDb(MemoryDb):
                 session.execute(stmt)
                 session.commit()
         except SQLAlchemyError as e:
-            logger.error(f"Exception upserting into table: {e}")
+            print(f"Exception upserting into table: {e}")
             if not self.table_exists():
-                log_info(f"Table does not exist: {self.table_name}")
-                log_info("Creating table for future transactions")
+                print(f"Table does not exist: {self.table_name}")
+                print("Creating table for future transactions")
                 self.create()
                 if create_and_retry:
                     return self.upsert_memory(memory, create_and_retry=False)
@@ -170,15 +170,15 @@ class SqliteMemoryDb(MemoryDb):
 
     def drop_table(self) -> None:
         if self.table_exists():
-            log_debug(f"Deleting table: {self.table_name}")
+            print(f"Deleting table: {self.table_name}")
             self.table.drop(self.db_engine)
 
     def table_exists(self) -> bool:
-        log_debug(f"Checking if table exists: {self.table.name}")
+        print(f"Checking if table exists: {self.table.name}")
         try:
             return self.inspector.has_table(self.table.name)
         except Exception as e:
-            logger.error(e)
+            print(e)
             return False
 
     def clear(self) -> bool:

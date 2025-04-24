@@ -3,7 +3,7 @@ from typing import Iterator, List
 from agno.document import Document
 from agno.document.reader.url_reader import URLReader
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import logger
+
 
 
 class UrlKnowledge(AgentKnowledge):
@@ -23,4 +23,4 @@ class UrlKnowledge(AgentKnowledge):
             try:
                 yield self.reader.read(url=url)
             except Exception as e:
-                logger.error(f"Error reading URL {url}: {str(e)}")
+                print(f"Error reading URL {url}: {str(e)}")

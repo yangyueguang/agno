@@ -27,11 +27,10 @@ export OPENAI_API_KEY=sk-xxxx
 ```python websearch_agent.py
 from agno.agent import Agent
 from agno.models.ollama import Ollama
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
     model=Ollama(),
-    tools=[DuckDuckGoTools()],
+    tools=[lambda x: 'hello'],
     markdown=True
 )
 agent.print_response("What's happening in New York?", stream=True)
@@ -53,12 +52,11 @@ agent.print_response("Tell me about a breaking news story from New York.", strea
 ```python
 from agno.agent import Agent
 from agno.models.ollama import Ollama
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
     model=Ollama(),
     description="You are an enthusiastic news reporter with a flair for storytelling!",
-    tools=[DuckDuckGoTools()],
+    tools=[lambda x: 'hello'],
     show_tool_calls=True,
     markdown=True
 )
@@ -69,7 +67,6 @@ agent.print_response("Tell me about a breaking news story from New York.", strea
 from agno.agent import Agent
 from agno.models.ollama import Ollama
 from agno.embedder.ollama import OllamaEmbedder
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.lancedb import LanceDb, SearchType
 
@@ -90,7 +87,7 @@ agent = Agent(
             embedder=OllamaEmbedder(),
         ),
     ),
-    tools=[DuckDuckGoTools()],
+    tools=[lambda x: 'hello'],
     show_tool_calls=True,
     markdown=True
 )
@@ -106,8 +103,6 @@ agent.print_response("What is the history of Thai curry?", stream=True)
 ```python
 from agno.agent import Agent
 from agno.models.ollama import Ollama
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.yfinance import YFinanceTools
 from agno.team import Team
 
 web_agent = Agent(

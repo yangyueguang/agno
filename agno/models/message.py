@@ -6,8 +6,39 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.media import Audio, AudioResponse, File, Image, ImageArtifact, Video
-from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.timer import Timer
+
+from time import perf_counter
+class Timer:
+    """Timer class for timing code execution"""
+
+    def __init__(self):
+        self.start_time: Optional[float] = None
+        self.end_time: Optional[float] = None
+        self.elapsed_time: Optional[float] = None
+
+    @property
+    def elapsed(self) -> float:
+        return self.elapsed_time or (perf_counter() - self.start_time) if self.start_time else 0.0
+
+    def start(self) -> float:
+        self.start_time = perf_counter()
+        return self.start_time
+
+    def stop(self) -> float:
+        self.end_time = perf_counter()
+        if self.start_time is not None:
+            self.elapsed_time = self.end_time - self.start_time
+        return self.end_time
+
+    def __enter__(self):
+        self.start_time = perf_counter()
+        return self
+
+    def __exit__(self, *args):
+        self.end_time = perf_counter()
+        if self.start_time is not None:
+            self.elapsed_time = self.end_time - self.start_time
+
 
 
 class MessageReferences(BaseModel):
@@ -281,14 +312,6 @@ class Message(BaseModel):
             level (str): The level to log the message at. One of debug, info, warning, or error.
                 Defaults to debug.
         """
-        _logger = log_debug
-        if level == "info":
-            _logger = log_info
-        elif level == "warning":
-            _logger = log_warning
-        elif level == "error":
-            _logger = log_error
-
         try:
             import shutil
 
@@ -297,19 +320,19 @@ class Message(BaseModel):
             terminal_width = 80  # fallback width
 
         header = f" {self.role} "
-        _logger(f"{header.center(terminal_width - 20, '=')}")
+        print(f"{header.center(terminal_width - 20, '=')}")
 
         if self.name:
-            _logger(f"Name: {self.name}")
+            print(f"Name: {self.name}")
         if self.tool_call_id:
-            _logger(f"Tool call Id: {self.tool_call_id}")
+            print(f"Tool call Id: {self.tool_call_id}")
         if self.thinking:
-            _logger(f"<thinking>\n{self.thinking}\n</thinking>")
+            print(f"<thinking>\n{self.thinking}\n</thinking>")
         if self.content:
             if isinstance(self.content, str) or isinstance(self.content, list):
-                _logger(self.content)
+                print(self.content)
             elif isinstance(self.content, dict):
-                _logger(json.dumps(self.content, indent=2))
+                print(json.dumps(self.content, indent=2))
         if self.tool_calls:
             tool_calls_list = ["Tool Calls:"]
             for tool_call in self.tool_calls:
@@ -326,19 +349,19 @@ class Message(BaseModel):
                         tool_calls_list.append("    Arguments: 'Invalid JSON format'")
             tool_calls_str = "\n".join(tool_calls_list)
 
-            _logger(tool_calls_str)
+            print(tool_calls_str)
         if self.images:
-            _logger(f"Images added: {len(self.images)}")
+            print(f"Images added: {len(self.images)}")
         if self.videos:
-            _logger(f"Videos added: {len(self.videos)}")
+            print(f"Videos added: {len(self.videos)}")
         if self.audio:
-            _logger(f"Audio Files added: {len(self.audio)}")
+            print(f"Audio Files added: {len(self.audio)}")
         if self.files:
-            _logger(f"Files added: {len(self.files)}")
+            print(f"Files added: {len(self.files)}")
 
         metrics_header = " TOOL METRICS " if self.role == "tool" else " METRICS "
         if metrics and self.metrics is not None and self.metrics != MessageMetrics():
-            _logger(metrics_header, center=True, symbol="*")
+            print(metrics_header)
 
             # Combine token metrics into a single line
             token_metrics = []
@@ -349,20 +372,20 @@ class Message(BaseModel):
             if self.metrics.total_tokens:
                 token_metrics.append(f"total={self.metrics.total_tokens}")
             if token_metrics:
-                _logger(f"* Tokens:                      {', '.join(token_metrics)}")
+                print(f"* Tokens:                      {', '.join(token_metrics)}")
             if self.metrics.prompt_tokens_details:
-                _logger(f"* Prompt tokens details:       {self.metrics.prompt_tokens_details}")
+                print(f"* Prompt tokens details:       {self.metrics.prompt_tokens_details}")
             if self.metrics.completion_tokens_details:
-                _logger(f"* Completion tokens details:   {self.metrics.completion_tokens_details}")
+                print(f"* Completion tokens details:   {self.metrics.completion_tokens_details}")
             if self.metrics.time is not None:
-                _logger(f"* Time:                        {self.metrics.time:.4f}s")
+                print(f"* Time:                        {self.metrics.time:.4f}s")
             if self.metrics.output_tokens and self.metrics.time:
-                _logger(f"* Tokens per second:           {self.metrics.output_tokens / self.metrics.time:.4f} tokens/s")
+                print(f"* Tokens per second:           {self.metrics.output_tokens / self.metrics.time:.4f} tokens/s")
             if self.metrics.time_to_first_token is not None:
-                _logger(f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s")
+                print(f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s")
             if self.metrics.additional_metrics:
-                _logger(f"* Additional metrics:          {self.metrics.additional_metrics}")
-            _logger(metrics_header, center=True, symbol="*")
+                print(f"* Additional metrics:          {self.metrics.additional_metrics}")
+            print(metrics_header)
 
     def content_is_valid(self) -> bool:
         """Check if the message content is valid."""

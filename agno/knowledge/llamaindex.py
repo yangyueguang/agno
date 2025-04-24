@@ -2,7 +2,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import logger
+
 
 try:
     from llama_index.core.retrievers import BaseRetriever
@@ -57,10 +57,10 @@ class LlamaIndexKnowledgeBase(AgentKnowledge):
         filters: Optional[Dict[str, Any]] = None,
     ) -> None:
         if self.loader is None:
-            logger.error("No loader provided for LlamaIndexKnowledgeBase")
+            print("No loader provided for LlamaIndexKnowledgeBase")
             return
         self.loader()
 
     def exists(self) -> bool:
-        logger.warning("LlamaIndexKnowledgeBase.exists() not supported - please check the vectorstore manually.")
+        print("LlamaIndexKnowledgeBase.exists() not supported - please check the vectorstore manually.")
         return True

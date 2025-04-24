@@ -7,8 +7,8 @@ from agno.memory.memory import Memory
 from agno.memory.row import MemoryRow
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.tools.function import Function
-from agno.utils.log import log_debug, logger
+from agno.tools import Function
+
 
 
 class MemoryManager(BaseModel):
@@ -33,8 +33,8 @@ class MemoryManager(BaseModel):
             try:
                 from agno.models.ollama import Ollama
             except ModuleNotFoundError as e:
-                logger.exception(e)
-                logger.error(
+                print(e)
+                print(
                     "Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`."
                 )
                 exit(1)
@@ -61,9 +61,9 @@ class MemoryManager(BaseModel):
                     func = Function.from_callable(tool)  # type: ignore
                     self._functions_for_model[func.name] = func
                     self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                    log_debug(f"Included function {func.name}")
+                    print(f"Included function {func.name}")
             except Exception as e:
-                logger.warning(f"Could not add function {tool}: {e}")
+                print(f"Could not add function {tool}: {e}")
         # Set tools on the model
         model.set_tools(tools=self._tools_for_model)
         # Set functions on the model
@@ -89,7 +89,7 @@ class MemoryManager(BaseModel):
                 )
             return "Memory added successfully"
         except Exception as e:
-            logger.warning(f"Error storing memory in db: {e}")
+            print(f"Error storing memory in db: {e}")
             return f"Error adding memory: {e}"
 
     def delete_memory(self, id: str) -> str:
@@ -104,7 +104,7 @@ class MemoryManager(BaseModel):
                 self.db.delete_memory(id=id)
             return "Memory deleted successfully"
         except Exception as e:
-            logger.warning(f"Error deleting memory in db: {e}")
+            print(f"Error deleting memory in db: {e}")
             return f"Error deleting memory: {e}"
 
     def update_memory(self, id: str, memory: str) -> str:
@@ -124,7 +124,7 @@ class MemoryManager(BaseModel):
                 )
             return "Memory updated successfully"
         except Exception as e:
-            logger.warning(f"Error updating memory in db: {e}")
+            print(f"Error updating memory in db: {e}")
             return f"Error updating memory: {e}"
 
     def clear_memory(self) -> str:
@@ -138,7 +138,7 @@ class MemoryManager(BaseModel):
                 self.db.clear()
             return "Memory cleared successfully"
         except Exception as e:
-            logger.warning(f"Error clearing memory in db: {e}")
+            print(f"Error clearing memory in db: {e}")
             return f"Error clearing memory: {e}"
 
     def get_system_message(self) -> Message:
@@ -171,7 +171,7 @@ class MemoryManager(BaseModel):
         message: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[str]:
-        log_debug("*********** MemoryManager Start ***********")
+        print("*********** MemoryManager Start ***********")
 
         # Update the Model (set defaults, add logit etc.)
         self.update_model()
@@ -190,7 +190,7 @@ class MemoryManager(BaseModel):
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
         response = self.model.response(messages=messages_for_model)
-        log_debug("*********** MemoryManager End ***********")
+        print("*********** MemoryManager End ***********")
         return response.content
 
     async def arun(
@@ -198,7 +198,7 @@ class MemoryManager(BaseModel):
         message: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[str]:
-        log_debug("*********** Async MemoryManager Start ***********")
+        print("*********** Async MemoryManager Start ***********")
 
         # Update the Model (set defaults, add logit etc.)
         self.update_model()
@@ -216,5 +216,5 @@ class MemoryManager(BaseModel):
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
         response = await self.model.aresponse(messages=messages_for_model)
-        log_debug("*********** Async MemoryManager End ***********")
+        print("*********** Async MemoryManager End ***********")
         return response.content

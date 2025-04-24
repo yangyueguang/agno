@@ -5,8 +5,8 @@ from typing import Callable, Dict, List, Optional, Union
 
 from agno.models.base import Model
 from agno.reasoning.step import ReasoningSteps
-from agno.tools.function import Function
-from agno.tools.toolkit import Toolkit
+from agno.tools import Function
+from agno.tools import Toolkit
 
 
 def get_default_reasoning_agent(

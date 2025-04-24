@@ -13,12 +13,41 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory.workflow import WorkflowMemory, WorkflowRun
-from agno.run.response import RunEvent, RunResponse  # noqa: F401
+from agno.run import RunEvent, RunResponse  # noqa: F401
 from agno.storage.base import Storage
 from agno.storage.session.workflow import WorkflowSession
-from agno.utils.common import nested_model_dump
-from agno.utils.log import log_debug, logger, set_log_level_to_debug, set_log_level_to_info
-from agno.utils.merge_dict import merge_dictionaries
+from typing import Any, Dict
+
+
+def merge_dictionaries(a: Dict[str, Any], b: Dict[str, Any]) -> None:
+    """
+    Recursively merges two dictionaries.
+    If there are conflicting keys, values from 'b' will take precedence.
+
+    Args:
+        a (Dict[str, Any]): The first dictionary to be merged.
+        b (Dict[str, Any]): The second dictionary, whose values will take precedence.
+
+    Returns:
+        None: The function modifies the first dictionary in place.
+    """
+    for key in b:
+        if key in a and isinstance(a[key], dict) and isinstance(b[key], dict):
+            merge_dictionaries(a[key], b[key])
+        else:
+            a[key] = b[key]
+
+
+def nested_model_dump(value):
+    from pydantic import BaseModel
+
+    if isinstance(value, BaseModel):
+        return value.model_dump()
+    elif isinstance(value, dict):
+        return {k: nested_model_dump(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [nested_model_dump(item) for item in value]
+    return value
 
 
 @dataclass(init=False)
@@ -133,7 +162,7 @@ class Workflow:
                 value.session_id = self.session_id
 
     def run(self, **kwargs: Any):
-        logger.error(f"{self.__class__.__name__}.run() method not implemented.")
+        print(f"{self.__class__.__name__}.run() method not implemented.")
         return
 
     def run_workflow(self, **kwargs: Any):
@@ -160,12 +189,12 @@ class Workflow:
         # Update the session_id for all Agent instances
         self.update_agent_session_ids()
 
-        log_debug(f"*********** Workflow Run Start: {self.run_id} ***********")
+        print(f"*********** Workflow Run Start: {self.run_id} ***********")
         try:
             self._subclass_run = cast(Callable, self._subclass_run)
             result = self._subclass_run(**kwargs)
         except Exception as e:
-            logger.error(f"Workflow.run() failed: {e}")
+            print(f"Workflow.run() failed: {e}")
             raise e
 
         # The run_workflow() method handles both Iterator[RunResponse] and RunResponse
@@ -188,14 +217,14 @@ class Workflow:
                         if item.content is not None and isinstance(item.content, str):
                             self.run_response.content += item.content
                     else:
-                        logger.warning(f"Workflow.run() should only yield RunResponse objects, got: {type(item)}")
+                        print(f"Workflow.run() should only yield RunResponse objects, got: {type(item)}")
                     yield item
 
                 # Add the run to the memory
                 self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
                 # Write this run to the database
                 self.write_to_storage()
-                log_debug(f"*********** Workflow Run End: {self.run_id} ***********")
+                print(f"*********** Workflow Run End: {self.run_id} ***********")
 
             return result_generator()
         # Case 2: The run method returns a RunResponse
@@ -213,38 +242,35 @@ class Workflow:
             self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
             # Write this run to the database
             self.write_to_storage()
-            log_debug(f"*********** Workflow Run End: {self.run_id} ***********")
+            print(f"*********** Workflow Run End: {self.run_id} ***********")
             return result
         else:
-            logger.warning(f"Workflow.run() should only return RunResponse objects, got: {type(result)}")
+            print(f"Workflow.run() should only return RunResponse objects, got: {type(result)}")
             return None
 
     def set_storage_mode(self):
         if self.storage is not None:
             if self.storage.mode in ["agent", "team"]:
-                logger.warning(f"You shouldn't use storage in multiple modes. Current mode is {self.storage.mode}.")
+                print(f"You shouldn't use storage in multiple modes. Current mode is {self.storage.mode}.")
 
             self.storage.mode = "workflow"
 
     def set_workflow_id(self) -> str:
         if self.workflow_id is None:
             self.workflow_id = str(uuid4())
-        log_debug(f"*********** Workflow ID: {self.workflow_id} ***********")
+        print(f"*********** Workflow ID: {self.workflow_id} ***********")
         return self.workflow_id
 
     def set_session_id(self) -> str:
         if self.session_id is None:
             self.session_id = str(uuid4())
-        log_debug(f"*********** Session ID: {self.session_id} ***********")
+        print(f"*********** Session ID: {self.session_id} ***********")
         return self.session_id
 
     def set_debug(self) -> None:
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
-            set_log_level_to_debug()
-            log_debug("Debug logs enabled")
-        else:
-            set_log_level_to_info()
+            print("Debug logs enabled")
 
     def set_monitoring(self) -> None:
         if self.monitoring or getenv("AGNO_MONITOR", "false").lower() == "true":
@@ -437,10 +463,10 @@ class Workflow:
                     try:
                         self.memory.runs = [WorkflowRun(**m) for m in session.memory["runs"]]
                     except Exception as e:
-                        logger.warning(f"Failed to load runs from memory: {e}")
+                        print(f"Failed to load runs from memory: {e}")
             except Exception as e:
-                logger.warning(f"Failed to load WorkflowMemory: {e}")
-        log_debug(f"-*- WorkflowSession loaded: {session.session_id}")
+                print(f"Failed to load WorkflowMemory: {e}")
+        print(f"-*- WorkflowSession loaded: {session.session_id}")
 
     def read_from_storage(self) -> Optional[WorkflowSession]:
         """Load the WorkflowSession from storage.
@@ -480,18 +506,18 @@ class Workflow:
         # Load an existing session or create a new session
         if self.storage is not None:
             # Load existing session if session_id is provided
-            log_debug(f"Reading WorkflowSession: {self.session_id}")
+            print(f"Reading WorkflowSession: {self.session_id}")
             self.read_from_storage()
 
             # Create a new session if it does not exist
             if self.workflow_session is None:
-                log_debug("-*- Creating new WorkflowSession")
+                print("-*- Creating new WorkflowSession")
                 # write_to_storage() will create a new WorkflowSession
                 # and populate self.workflow_session with the new session
                 self.write_to_storage()
                 if self.workflow_session is None:
                     raise Exception("Failed to create new WorkflowSession in storage")
-                log_debug(f"-*- Created WorkflowSession: {self.workflow_session.session_id}")
+                print(f"-*- Created WorkflowSession: {self.workflow_session.session_id}")
                 self.log_workflow_session()
         return self.session_id
 
@@ -507,7 +533,7 @@ class Workflow:
         self.load_session(force=True)
 
     def log_workflow_session(self):
-        log_debug(f"*********** Logging WorkflowSession: {self.session_id} ***********")
+        print(f"*********** Logging WorkflowSession: {self.session_id} ***********")
 
     def rename(self, name: str) -> None:
         """Rename the Workflow and save to storage"""
@@ -566,7 +592,7 @@ class Workflow:
 
         # Create a new Workflow
         new_workflow = self.__class__(**fields_for_new_workflow)
-        log_debug(f"Created new {self.__class__.__name__}")
+        print(f"Created new {self.__class__.__name__}")
         return new_workflow
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
@@ -582,11 +608,11 @@ class Workflow:
             try:
                 return deepcopy(field_value)
             except Exception as e:
-                logger.warning(f"Failed to deepcopy field: {field_name} - {e}")
+                print(f"Failed to deepcopy field: {field_name} - {e}")
                 try:
                     return copy(field_value)
                 except Exception as e:
-                    logger.warning(f"Failed to copy field: {field_name} - {e}")
+                    print(f"Failed to copy field: {field_name} - {e}")
                     return field_value
 
         # For pydantic models, attempt a model_copy
@@ -594,11 +620,11 @@ class Workflow:
             try:
                 return field_value.model_copy(deep=True)
             except Exception as e:
-                logger.warning(f"Failed to deepcopy field: {field_name} - {e}")
+                print(f"Failed to deepcopy field: {field_name} - {e}")
                 try:
                     return field_value.model_copy(deep=False)
                 except Exception as e:
-                    logger.warning(f"Failed to copy field: {field_name} - {e}")
+                    print(f"Failed to copy field: {field_name} - {e}")
                     return field_value
 
         # For other types, return as is

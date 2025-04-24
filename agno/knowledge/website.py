@@ -6,7 +6,7 @@ from pydantic import model_validator
 from agno.document import Document
 from agno.document.reader.website_reader import WebsiteReader
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import log_debug, log_info, logger
+
 
 
 class WebsiteKnowledgeBase(AgentKnowledge):
@@ -57,21 +57,21 @@ class WebsiteKnowledgeBase(AgentKnowledge):
         """Load the website contents to the vector db"""
 
         if self.vector_db is None:
-            logger.warning("No vector db provided")
+            print("No vector db provided")
             return
 
         if self.reader is None:
-            logger.warning("No reader provided")
+            print("No reader provided")
             return
 
         if recreate:
-            log_debug("Dropping collection")
+            print("Dropping collection")
             self.vector_db.drop()
 
-        log_debug("Creating collection")
+        print("Creating collection")
         self.vector_db.create()
 
-        log_info("Loading knowledge base")
+        print("Loading knowledge base")
         num_documents = 0
 
         # Given that the crawler needs to parse the URL before existence can be checked
@@ -79,9 +79,9 @@ class WebsiteKnowledgeBase(AgentKnowledge):
         urls_to_read = self.urls.copy()
         if not recreate:
             for url in urls_to_read:
-                log_debug(f"Checking if {url} exists in the vector db")
+                print(f"Checking if {url} exists in the vector db")
                 if self.vector_db.name_exists(name=url):
-                    log_debug(f"Skipping {url} as it exists in the vector db")
+                    print(f"Skipping {url} as it exists in the vector db")
                     urls_to_read.remove(url)
 
         for url in urls_to_read:
@@ -94,10 +94,10 @@ class WebsiteKnowledgeBase(AgentKnowledge):
             else:
                 self.vector_db.insert(documents=document_list, filters=filters)
             num_documents += len(document_list)
-            log_info(f"Loaded {num_documents} documents to knowledge base")
+            print(f"Loaded {num_documents} documents to knowledge base")
 
         if self.optimize_on is not None and num_documents > self.optimize_on:
-            log_debug("Optimizing Vector DB")
+            print("Optimizing Vector DB")
             self.vector_db.optimize()
 
     async def async_load(
@@ -110,33 +110,33 @@ class WebsiteKnowledgeBase(AgentKnowledge):
         """Asynchronously load the website contents to the vector db"""
 
         if self.vector_db is None:
-            logger.warning("No vector db provided")
+            print("No vector db provided")
             return
 
         if self.reader is None:
-            logger.warning("No reader provided")
+            print("No reader provided")
             return
 
         vector_db = self.vector_db
         reader = self.reader
 
         if recreate:
-            log_debug("Dropping collection asynchronously")
+            print("Dropping collection asynchronously")
             await vector_db.async_drop()
 
-        log_debug("Creating collection asynchronously")
+        print("Creating collection asynchronously")
         await vector_db.async_create()
 
-        log_info("Loading knowledge base asynchronously")
+        print("Loading knowledge base asynchronously")
         num_documents = 0
 
         urls_to_read = self.urls.copy()
         if not recreate:
             for url in urls_to_read[:]:
-                log_debug(f"Checking if {url} exists in the vector db")
+                print(f"Checking if {url} exists in the vector db")
                 name_exists = vector_db.async_name_exists(name=url)
                 if name_exists:
-                    log_debug(f"Skipping {url} as it exists in the vector db")
+                    print(f"Skipping {url} as it exists in the vector db")
                     urls_to_read.remove(url)
 
         async def process_url(url: str) -> List[Document]:
@@ -152,7 +152,7 @@ class WebsiteKnowledgeBase(AgentKnowledge):
 
                 return document_list
             except Exception as e:
-                logger.error(f"Error processing URL {url}: {e}")
+                print(f"Error processing URL {url}: {e}")
                 return []
 
         url_tasks = [process_url(url) for url in urls_to_read]
@@ -165,8 +165,8 @@ class WebsiteKnowledgeBase(AgentKnowledge):
                 else:
                     await vector_db.async_insert(documents=document_list, filters=filters)
                 num_documents += len(document_list)
-                log_info(f"Loaded {num_documents} documents to knowledge base asynchronously")
+                print(f"Loaded {num_documents} documents to knowledge base asynchronously")
 
         if self.optimize_on is not None and num_documents > self.optimize_on:
-            log_debug("Optimizing Vector DB")
+            print("Optimizing Vector DB")
             vector_db.optimize()

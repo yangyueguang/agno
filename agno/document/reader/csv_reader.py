@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import IO, Any, List, Union
 from urllib.parse import urlparse
 
-from agno.utils.http import async_fetch_with_retry, fetch_with_retry
+import httpx
 
+from time import sleep
 try:
     import aiofiles
 except ImportError:
@@ -15,7 +16,33 @@ except ImportError:
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import logger
+
+
+
+def fetch_with_retry(
+    url: str,
+    max_retries: int = 3,
+    backoff_factor: int = 2,
+):
+    """Synchronous HTTP GET with retry logic."""
+
+    for attempt in range(max_retries):
+        try:
+            response = httpx.get(url)
+            response.raise_for_status()
+            return response
+        except httpx.RequestError as e:
+            if attempt == max_retries - 1:
+                print(f"Failed to fetch {url} after {max_retries} attempts: {e}")
+                raise
+            wait_time = backoff_factor**attempt
+            print(f"Request failed (attempt {attempt + 1}), retrying in {wait_time} seconds...")
+            sleep(wait_time)
+        except httpx.HTTPStatusError as e:
+            print(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
+            raise
+
+    raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")
 
 
 class CSVReader(Reader):
@@ -26,10 +53,10 @@ class CSVReader(Reader):
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
-                logger.info(f"Reading: {file}")
+                print(f"Reading: {file}")
                 file_content = file.open(newline="", mode="r", encoding="utf-8")
             else:
-                logger.info(f"Reading uploaded file: {file.name}")
+                print(f"Reading uploaded file: {file.name}")
                 file.seek(0)
                 file_content = io.StringIO(file.read().decode("utf-8"))  # type: ignore
 
@@ -54,7 +81,7 @@ class CSVReader(Reader):
                 return chunked_documents
             return documents
         except Exception as e:
-            logger.error(f"Error reading: {file.name if isinstance(file, IO) else file}: {e}")
+            print(f"Error reading: {file.name if isinstance(file, IO) else file}: {e}")
             return []
 
     async def async_read(
@@ -76,12 +103,12 @@ class CSVReader(Reader):
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
-                logger.info(f"Reading async: {file}")
+                print(f"Reading async: {file}")
                 async with aiofiles.open(file, mode="r", encoding="utf-8", newline="") as file_content:
                     content = await file_content.read()
                     file_content_io = io.StringIO(content)
             else:
-                logger.info(f"Reading uploaded file async: {file.name}")
+                print(f"Reading uploaded file async: {file.name}")
                 file.seek(0)
                 file_content_io = io.StringIO(file.read().decode("utf-8"))  # type: ignore
 
@@ -127,7 +154,7 @@ class CSVReader(Reader):
 
             return documents
         except Exception as e:
-            logger.error(f"Error reading async: {file.name if isinstance(file, IO) else file}: {e}")
+            print(f"Error reading async: {file.name if isinstance(file, IO) else file}: {e}")
             return []
 
 
@@ -138,7 +165,7 @@ class CSVUrlReader(Reader):
         if not url:
             raise ValueError("No URL provided")
 
-        logger.info(f"Reading: {url}")
+        print(f"Reading: {url}")
         # Retry the request up to 3 times with exponential backoff
         response = fetch_with_retry(url)
 
@@ -154,29 +181,3 @@ class CSVUrlReader(Reader):
 
         return documents
 
-    async def async_read(self, url: str) -> List[Document]:
-        if not url:
-            raise ValueError("No URL provided")
-
-        try:
-            import httpx
-        except ImportError:
-            raise ImportError("`httpx` not installed")
-
-        logger.info(f"Reading async: {url}")
-
-        async with httpx.AsyncClient() as client:
-            response = await async_fetch_with_retry(url, client=client)
-
-            parsed_url = urlparse(url)
-            filename = os.path.basename(parsed_url.path) or "data.csv"
-
-            file_obj = io.BytesIO(response.content)
-            file_obj.name = filename
-
-            # Use the async version of CSVReader
-            documents = await CSVReader().async_read(file=file_obj)
-
-            file_obj.close()
-
-            return documents

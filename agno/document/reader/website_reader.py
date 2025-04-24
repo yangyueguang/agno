@@ -7,7 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import log_debug, logger
+
 
 try:
     from bs4 import BeautifulSoup, Tag  # noqa: F401
@@ -125,7 +125,7 @@ class WebsiteReader(Reader):
             self.delay()
 
             try:
-                log_debug(f"Crawling: {current_url}")
+                print(f"Crawling: {current_url}")
                 response = httpx.get(current_url, timeout=10)
 
                 response.raise_for_status()
@@ -160,7 +160,7 @@ class WebsiteReader(Reader):
                             self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
             except Exception as e:
-                logger.warning(f"Failed to crawl: {current_url}: {e}")
+                print(f"Failed to crawl: {current_url}: {e}")
                 pass
 
         return crawler_result
@@ -201,7 +201,7 @@ class WebsiteReader(Reader):
                 await self.async_delay()
 
                 try:
-                    log_debug(f"Crawling asynchronously: {current_url}")
+                    print(f"Crawling asynchronously: {current_url}")
                     response = await client.get(current_url, timeout=10, follow_redirects=True)
                     response.raise_for_status()
 
@@ -236,7 +236,7 @@ class WebsiteReader(Reader):
                                 self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
                 except Exception as e:
-                    logger.warning(f"Failed to crawl asynchronously: {current_url}: {e}")
+                    print(f"Failed to crawl asynchronously: {current_url}: {e}")
 
         return crawler_result
 
@@ -251,7 +251,7 @@ class WebsiteReader(Reader):
         :return: A list of documents.
         """
 
-        log_debug(f"Reading: {url}")
+        print(f"Reading: {url}")
         crawler_result = self.crawl(url)
         documents = []
         for crawled_url, crawled_content in crawler_result.items():
@@ -284,7 +284,7 @@ class WebsiteReader(Reader):
         :param url: The URL of the website to read.
         :return: A list of documents.
         """
-        log_debug(f"Reading asynchronously: {url}")
+        print(f"Reading asynchronously: {url}")
         crawler_result = await self.async_crawl(url)
         documents = []
 

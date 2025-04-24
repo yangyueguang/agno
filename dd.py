@@ -23,19 +23,80 @@ import json
 from textwrap import dedent
 from typing import Dict, Iterator, Optional
 from agno.storage.sqlite import SqliteStorage
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.newspaper4k import Newspaper4kTools
-from agno.utils.log import logger
-from agno.utils.pprint import pprint_run_response
+from agno.tools import DuckDuckGoTools
+from agno.tools import NewspaperTools
+
 from agno.workflow import RunEvent, RunResponse, Workflow
 from pydantic import BaseModel, Field
 from typing import Iterator  # noqa
 from pydantic import BaseModel
 from agno.agent import Agent
 from agno.models.ollama import Ollama
-from agno.team.team import Team
-from agno.tools.yfinance import YFinanceTools
+from agno.team import Team
+from agno.tools import YFinanceTools
 
+import json
+from typing import Iterable, Union
+
+from pydantic import BaseModel
+
+from agno.run import RunResponse
+
+from agno.models.base import Timer
+
+
+def pprint_run_response(
+    run_response: Union[RunResponse, Iterable[RunResponse]], markdown: bool = False, show_time: bool = False
+) -> None:
+    from rich.box import ROUNDED
+    from rich.json import JSON
+    from rich.live import Live
+    from rich.markdown import Markdown
+    from rich.status import Status
+    from rich.table import Table
+    from rich.console import Console
+
+    console = Console()
+    # If run_response is a single RunResponse, wrap it in a list to make it iterable
+    if isinstance(run_response, RunResponse):
+        single_response_content: Union[str, JSON, Markdown] = ""
+        if isinstance(run_response.content, str):
+            single_response_content = (
+                Markdown(run_response.content) if markdown else run_response.get_content_as_string(indent=4)
+            )
+        elif isinstance(run_response.content, BaseModel):
+            try:
+                single_response_content = JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
+            except Exception as e:
+                print(f"Failed to convert response to Markdown: {e}")
+        else:
+            try:
+                single_response_content = JSON(json.dumps(run_response.content), indent=4)
+            except Exception as e:
+                print(f"Failed to convert response to string: {e}")
+
+        table = Table(box=ROUNDED, border_style="blue", show_header=False)
+        table.add_row(single_response_content)
+        console.print(table)
+    else:
+        streaming_response_content: str = ""
+        with Live(console=console) as live_log:
+            status = Status("Working...", spinner="dots")
+            live_log.update(status)
+            response_timer = Timer()
+            response_timer.start()
+            for resp in run_response:
+                if isinstance(resp, RunResponse) and isinstance(resp.content, str):
+                    streaming_response_content += resp.content
+
+                formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore
+                table = Table(box=ROUNDED, border_style="blue", show_header=False)
+                if show_time:
+                    table.add_row(f"Response\n({response_timer.elapsed:.1f}s)", formatted_response)  # type: ignore
+                else:
+                    table.add_row(formatted_response)  # type: ignore
+                live_log.update(table)
+            response_timer.stop()
 
 class StockAnalysis(BaseModel):
     symbol: str
@@ -148,7 +209,7 @@ class ResearchReportGenerator(Workflow):
 
     article_scraper: Agent = Agent(
         model=Ollama('llama3.1:8b'),
-        tools=[Newspaper4kTools()],
+        tools=[NewspaperTools()],
         description=dedent("""\
         You are ContentBot-X, an expert at extracting and structuring academic content.\
         """),
@@ -268,7 +329,7 @@ class ResearchReportGenerator(Workflow):
 
         The function utilizes the `session_state` to store and retrieve cached data.
         """
-        logger.info(f"Generating a report on: {topic}")
+        print(f"Generating a report on: {topic}")
 
         # Use the cached report if use_cached_report is True
         if use_cached_report:
@@ -300,22 +361,22 @@ class ResearchReportGenerator(Workflow):
         yield from self.write_research_report(topic, scraped_articles)
 
     def get_cached_report(self, topic: str) -> Optional[str]:
-        logger.info("Checking if cached report exists")
+        print("Checking if cached report exists")
         return self.session_state.get("reports", {}).get(topic)
 
     def add_report_to_cache(self, topic: str, report: str):
-        logger.info(f"Saving report for topic: {topic}")
+        print(f"Saving report for topic: {topic}")
         self.session_state.setdefault("reports", {})
         self.session_state["reports"][topic] = report
         # Save the report to the storage
         self.write_to_storage()
 
     def get_cached_search_results(self, topic: str) -> Optional[SearchResults]:
-        logger.info("Checking if cached search results exist")
+        print("Checking if cached search results exist")
         return self.session_state.get("search_results", {}).get(topic)
 
     def add_search_results_to_cache(self, topic: str, search_results: SearchResults):
-        logger.info(f"Saving search results for topic: {topic}")
+        print(f"Saving search results for topic: {topic}")
         self.session_state.setdefault("search_results", {})
         self.session_state["search_results"][topic] = search_results.model_dump()
         # Save the search results to the storage
@@ -324,13 +385,13 @@ class ResearchReportGenerator(Workflow):
     def get_cached_scraped_articles(
         self, topic: str
     ) -> Optional[Dict[str, ScrapedArticle]]:
-        logger.info("Checking if cached scraped articles exist")
+        print("Checking if cached scraped articles exist")
         return self.session_state.get("scraped_articles", {}).get(topic)
 
     def add_scraped_articles_to_cache(
         self, topic: str, scraped_articles: Dict[str, ScrapedArticle]
     ):
-        logger.info(f"Saving scraped articles for topic: {topic}")
+        print(f"Saving scraped articles for topic: {topic}")
         self.session_state.setdefault("scraped_articles", {})
         self.session_state["scraped_articles"][topic] = scraped_articles
         # Save the scraped articles to the storage
@@ -347,12 +408,12 @@ class ResearchReportGenerator(Workflow):
                     search_results = SearchResults.model_validate(
                         search_results_from_cache
                     )
-                    logger.info(
+                    print(
                         f"Found {len(search_results.articles)} articles in cache."
                     )
                     return search_results
             except Exception as e:
-                logger.warning(f"Could not read search results from cache: {e}")
+                print(f"Could not read search results from cache: {e}")
 
         # If there are no cached search_results, use the web_searcher to find the latest articles
         for attempt in range(num_attempts):
@@ -364,20 +425,20 @@ class ResearchReportGenerator(Workflow):
                     and isinstance(searcher_response.content, SearchResults)
                 ):
                     article_count = len(searcher_response.content.articles)
-                    logger.info(
+                    print(
                         f"Found {article_count} articles on attempt {attempt + 1}"
                     )
                     # Cache the search results
                     self.add_search_results_to_cache(topic, searcher_response.content)
                     return searcher_response.content
                 else:
-                    logger.warning(
+                    print(
                         f"Attempt {attempt + 1}/{num_attempts} failed: Invalid response type"
                     )
             except Exception as e:
-                logger.warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
+                print(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
 
-        logger.error(f"Failed to get search results after {num_attempts} attempts")
+        print(f"Failed to get search results after {num_attempts} attempts")
         return None
 
     def scrape_articles(
@@ -391,17 +452,17 @@ class ResearchReportGenerator(Workflow):
                 scraped_articles_from_cache = self.get_cached_scraped_articles(topic)
                 if scraped_articles_from_cache is not None:
                     scraped_articles = scraped_articles_from_cache
-                    logger.info(
+                    print(
                         f"Found {len(scraped_articles)} scraped articles in cache."
                     )
                     return scraped_articles
             except Exception as e:
-                logger.warning(f"Could not read scraped articles from cache: {e}")
+                print(f"Could not read scraped articles from cache: {e}")
 
         # Scrape the articles that are not in the cache
         for article in search_results.articles:
             if article.url in scraped_articles:
-                logger.info(f"Found scraped article in cache: {article.url}")
+                print(f"Found scraped article in cache: {article.url}")
                 continue
 
             article_scraper_response: RunResponse = self.article_scraper.run(
@@ -415,7 +476,7 @@ class ResearchReportGenerator(Workflow):
                 scraped_articles[article_scraper_response.content.url] = (
                     article_scraper_response.content
                 )
-                logger.info(f"Scraped article: {article_scraper_response.content.url}")
+                print(f"Scraped article: {article_scraper_response.content.url}")
 
         # Save the scraped articles in the session state
         self.add_scraped_articles_to_cache(topic, scraped_articles)
@@ -424,7 +485,7 @@ class ResearchReportGenerator(Workflow):
     def write_research_report(
         self, topic: str, scraped_articles: Dict[str, ScrapedArticle]
     ) -> Iterator[RunResponse]:
-        logger.info("Writing research report")
+        print("Writing research report")
         # Prepare the input for the writer
         writer_input = {
             "topic": topic,

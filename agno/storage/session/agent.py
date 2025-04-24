@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Mapping, Optional
 
-from agno.utils.log import logger
+
 
 
 @dataclass
@@ -45,7 +45,7 @@ class AgentSession:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Optional[AgentSession]:
         if data is None or data.get("session_id") is None:
-            logger.warning("AgentSession is missing session_id")
+            print("AgentSession is missing session_id")
             return None
         return cls(
             session_id=data.get("session_id"),  # type: ignore

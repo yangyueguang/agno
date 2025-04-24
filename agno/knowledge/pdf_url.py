@@ -3,7 +3,7 @@ from typing import AsyncIterator, Iterator, List, Union
 from agno.document import Document
 from agno.document.reader.pdf_reader import PDFUrlImageReader, PDFUrlReader
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import logger
+
 
 
 class PDFUrlKnowledgeBase(AgentKnowledge):
@@ -23,7 +23,7 @@ class PDFUrlKnowledgeBase(AgentKnowledge):
             if url.endswith(".pdf"):
                 yield self.reader.read(url=url)
             else:
-                logger.error(f"Unsupported URL: {url}")
+                print(f"Unsupported URL: {url}")
 
     @property
     async def async_document_lists(self) -> AsyncIterator[List[Document]]:
@@ -37,4 +37,4 @@ class PDFUrlKnowledgeBase(AgentKnowledge):
             if url.endswith(".pdf"):
                 yield await self.reader.async_read(url=url)
             else:
-                logger.error(f"Unsupported URL: {url}")
+                print(f"Unsupported URL: {url}")

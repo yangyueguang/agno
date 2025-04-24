@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from agno.document.base import Document
 from agno.document.chunking.strategy import ChunkingStrategy
-from agno.embedder.ollama import OllamaEmbedder
+from agno.embedder import OllamaEmbedder
 
 try:
     from chonkie import SemanticChunker

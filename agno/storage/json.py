@@ -9,7 +9,7 @@ from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
-from agno.utils.log import logger
+
 
 
 class JsonStorage(Storage):
@@ -134,7 +134,7 @@ class JsonStorage(Storage):
                 f.write(self.serialize(data))
             return session
         except Exception as e:
-            logger.error(f"Error upserting session: {e}")
+            print(f"Error upserting session: {e}")
             return None
 
     def delete_session(self, session_id: Optional[str] = None):
@@ -144,7 +144,7 @@ class JsonStorage(Storage):
         try:
             (self.dir_path / f"{session_id}.json").unlink(missing_ok=True)
         except Exception as e:
-            logger.error(f"Error deleting session: {e}")
+            print(f"Error deleting session: {e}")
 
     def drop(self) -> None:
         """Drop all sessions from storage."""

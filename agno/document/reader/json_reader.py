@@ -6,7 +6,7 @@ from typing import IO, Any, List, Union
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import log_info
+
 
 
 class JSONReader(Reader):
@@ -19,12 +19,12 @@ class JSONReader(Reader):
             if isinstance(path, Path):
                 if not path.exists():
                     raise FileNotFoundError(f"Could not find file: {path}")
-                log_info(f"Reading: {path}")
+                print(f"Reading: {path}")
                 json_name = path.name.split(".")[0]
                 json_contents = json.loads(path.read_text("utf-8"))
 
             elif isinstance(path, BytesIO):
-                log_info(f"Reading uploaded file: {path.name}")
+                print(f"Reading uploaded file: {path.name}")
                 json_name = path.name.split(".")[0]
                 path.seek(0)
                 json_contents = json.load(path)

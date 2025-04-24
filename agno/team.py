@@ -24,9 +24,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agno.agent import Agent
-from agno.agent.metrics import SessionMetrics
-from agno.exceptions import ModelProviderError, RunCancelledException
+from agno.agent import *
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.memory import Memory
 from agno.memory.team import TeamMemory, TeamRun
@@ -34,35 +32,139 @@ from agno.models.base import Model
 from agno.models.message import Citations, Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
-from agno.run.messages import RunMessages
-from agno.run.response import RunEvent, RunResponse
-from agno.run.team import TeamRunResponse
+from agno.run import RunMessages
+from agno.run import RunEvent, RunResponse
+from agno.run import TeamRunResponse
 from agno.storage.base import Storage
 from agno.storage.session.team import TeamSession
-from agno.tools.function import Function, get_entrypoint_docstring
-from agno.tools.toolkit import Toolkit
-from agno.utils.log import (
-    log_debug,
-    log_error,
-    log_exception,
-    log_info,
-    log_warning,
-    set_log_level_to_debug,
-    set_log_level_to_info,
-    use_agent_logger,
-    use_team_logger,
-)
-from agno.utils.message import get_text_from_message
-from agno.utils.response import (
-    check_if_run_cancelled,
-    create_panel,
-    escape_markdown_tags,
-    format_tool_calls,
-    update_run_response_with_reasoning,
-)
-from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model_str
-from agno.utils.timer import Timer
+from agno.tools import Function
+from agno.tools import Toolkit
+from agno.models.base import Timer
+from functools import partial
+from docstring_parser import parse
+from typing import Dict, List, Union
+
+from agno.models.message import Message
+from typing import Dict, List, Union
+
+from agno.models.message import Message
+
+
+def get_text_from_message(message: Union[List, Dict, str, Message]) -> str:
+    """Return the user texts from the message"""
+
+    if isinstance(message, str):
+        return message
+    if isinstance(message, list):
+        text_messages = []
+        if len(message) == 0:
+            return ""
+
+        if "type" in message[0]:
+            for m in message:
+                m_type = m.get("type")
+                if m_type is not None and isinstance(m_type, str):
+                    m_value = m.get(m_type)
+                    if m_value is not None and isinstance(m_value, str):
+                        if m_type == "text":
+                            text_messages.append(m_value)
+                        # if m_type == "image_url":
+                        #     text_messages.append(f"Image: {m_value}")
+                        # else:
+                        #     text_messages.append(f"{m_type}: {m_value}")
+        elif "role" in message[0]:
+            for m in message:
+                m_role = m.get("role")
+                if m_role is not None and isinstance(m_role, str):
+                    m_content = m.get("content")
+                    if m_content is not None and isinstance(m_content, str):
+                        if m_role == "user":
+                            text_messages.append(m_content)
+        if len(text_messages) > 0:
+            return "\n".join(text_messages)
+    if isinstance(message, dict):
+        if "content" in message:
+            return get_text_from_message(message["content"])
+    if isinstance(message, Message) and message.content is not None:
+        return get_text_from_message(message.content)
+    return ""
+
+
+def get_text_from_message(message: Union[List, Dict, str, Message]) -> str:
+    """Return the user texts from the message"""
+
+    if isinstance(message, str):
+        return message
+    if isinstance(message, list):
+        text_messages = []
+        if len(message) == 0:
+            return ""
+
+        if "type" in message[0]:
+            for m in message:
+                m_type = m.get("type")
+                if m_type is not None and isinstance(m_type, str):
+                    m_value = m.get(m_type)
+                    if m_value is not None and isinstance(m_value, str):
+                        if m_type == "text":
+                            text_messages.append(m_value)
+                        # if m_type == "image_url":
+                        #     text_messages.append(f"Image: {m_value}")
+                        # else:
+                        #     text_messages.append(f"{m_type}: {m_value}")
+        elif "role" in message[0]:
+            for m in message:
+                m_role = m.get("role")
+                if m_role is not None and isinstance(m_role, str):
+                    m_content = m.get("content")
+                    if m_content is not None and isinstance(m_content, str):
+                        if m_role == "user":
+                            text_messages.append(m_content)
+        if len(text_messages) > 0:
+            return "\n".join(text_messages)
+    if isinstance(message, dict):
+        if "content" in message:
+            return get_text_from_message(message["content"])
+    if isinstance(message, Message) and message.content is not None:
+        return get_text_from_message(message.content)
+    return ""
+
+
+def get_entrypoint_docstring(entrypoint: Callable) -> str:
+    from inspect import getdoc
+    if isinstance(entrypoint, partial):
+        return str(entrypoint)
+
+    doc = getdoc(entrypoint)
+    if not doc:
+        return ""
+    parsed = parse(doc)
+    lines = []
+    if parsed.short_description:
+        lines.append(parsed.short_description)
+    if parsed.long_description:
+        lines.extend(parsed.long_description.split("\n"))
+    return "\n".join(lines)
+
+
+def format_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[str]:
+    """Format tool calls for display in a readable format.
+
+    Args:
+        tool_calls: List of tool call dictionaries containing tool_name and tool_args
+
+    Returns:
+        List[str]: List of formatted tool call strings
+    """
+    formatted_tool_calls = []
+    for tool_call in tool_calls:
+        if "tool_name" in tool_call and "tool_args" in tool_call:
+            tool_name = tool_call["tool_name"]
+            args_str = ""
+            if "tool_args" in tool_call and tool_call["tool_args"] is not None:
+                args_str = ", ".join(f"{k}={v}" for k, v in tool_call["tool_args"].items())
+            formatted_tool_calls.append(f"{tool_name}({args_str})")
+    return formatted_tool_calls
 
 
 @dataclass(init=False)
@@ -329,9 +431,6 @@ class Team:
     def _set_debug(self) -> None:
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
-            set_log_level_to_debug(source_type="team")
-        else:
-            set_log_level_to_info(source_type="team")
 
     def _set_storage_mode(self):
         if self.storage is not None:
@@ -362,7 +461,7 @@ class Team:
         member.team_id = self.team_id
 
         if member.name is None and member.role is None:
-            log_warning("Team member name and role is undefined.")
+            print("Team member name and role is undefined.")
 
     def _initialize_team(self) -> None:
         self._set_storage_mode()
@@ -371,7 +470,6 @@ class Team:
         self._set_debug()
 
         # Make sure for the team, we are using the team logger
-        use_team_logger()
 
         # Set monitoring and telemetry
         self._set_monitoring()
@@ -382,8 +480,8 @@ class Team:
         # Set the session ID if not yet set
         self._set_session_id()
 
-        log_debug(f"Team ID: {self.team_id}", center=True)
-        log_debug(f"Session ID: {self.session_id}", center=True)
+        print(f"Team ID: {self.team_id}")
+        print(f"Session ID: {self.session_id}")
 
         # Initialize formatter
         if self._formatter is None:
@@ -458,7 +556,7 @@ class Team:
         if self.response_model is not None and self.parse_response:
             # Disable stream if response_model is set
             stream = False
-            log_warning("Disabling stream as response_model is set")
+            print("Disabling stream as response_model is set")
 
         # Configure the model for runs
         self._configure_model(show_tool_calls=show_tool_calls)
@@ -472,8 +570,8 @@ class Team:
             run_id = str(uuid4())
             self.run_id = run_id
 
-            log_debug(f"Team Run Start: {self.run_id}", center=True)
-            log_debug(f"Mode: '{self.mode}'", center=True)
+            print(f"Team Run Start: {self.run_id}")
+            print(f"Mode: '{self.mode}'")
 
             # Set run_input
             if message is not None:
@@ -587,7 +685,7 @@ class Team:
             except ModelProviderError as e:
                 import time
 
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
+                print(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 last_exception = e
                 if attempt < num_attempts - 1:
                     time.sleep(2**attempt)
@@ -602,7 +700,7 @@ class Team:
 
         # If we get here, all retries failed
         if last_exception is not None:
-            log_error(
+            print(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             raise last_exception
@@ -741,11 +839,11 @@ class Team:
                         run_response.content = parsed_response_content
                         run_response.content_type = self.response_model.__name__
                     else:
-                        log_warning("Failed to convert response to response_model")
+                        print("Failed to convert response to response_model")
                 except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
+                    print(f"Failed to convert response to output model: {e}")
             else:
-                log_warning("Something went wrong. Run response content is not a string")
+                print("Something went wrong. Run response content is not a string")
         elif self._member_response_model is not None:
             if isinstance(run_response.content, str):
                 try:
@@ -757,16 +855,16 @@ class Team:
                         run_response.content = parsed_response_content
                         run_response.content_type = self._member_response_model.__name__
                     else:
-                        log_warning("Failed to convert response to response_model")
+                        print("Failed to convert response to response_model")
                 except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
+                    print(f"Failed to convert response to output model: {e}")
             else:
-                log_warning("Something went wrong. Run response content is not a string")
+                print("Something went wrong. Run response content is not a string")
 
         # 8. Log Team Run
         self._log_team_run()
 
-        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
+        print(f"Team Run End: {self.run_id}")
 
     def _run_stream(
         self,
@@ -978,7 +1076,7 @@ class Team:
                 event=RunEvent.run_completed,
             )
 
-        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
+        print(f"Team Run End: {self.run_id}")
 
     @overload
     async def arun(
@@ -1046,7 +1144,7 @@ class Team:
         if self.response_model is not None and self.parse_response:
             # Disable stream if response_model is set
             stream = False
-            log_warning("Disabling stream as response_model is set")
+            print("Disabling stream as response_model is set")
 
         # Configure the model for runs
         self._configure_model(show_tool_calls=show_tool_calls)
@@ -1060,8 +1158,8 @@ class Team:
             run_id = str(uuid4())
             self.run_id = run_id
 
-            log_debug(f"Team Run Start: {self.run_id}", center=True)
-            log_debug(f"Mode: '{self.mode}'", center=True)
+            print(f"Team Run Start: {self.run_id}")
+            print(f"Mode: '{self.mode}'")
 
             # Set run_input
             if message is not None:
@@ -1175,7 +1273,7 @@ class Team:
                     return self.run_response
 
             except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
+                print(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 last_exception = e
                 if attempt < num_attempts - 1:
                     await asyncio.sleep(2**attempt)
@@ -1190,7 +1288,7 @@ class Team:
 
         # If we get here, all retries failed
         if last_exception is not None:
-            log_error(
+            print(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             raise last_exception
@@ -1330,11 +1428,11 @@ class Team:
                         run_response.content = parsed_response_content
                         run_response.content_type = self.response_model.__name__
                     else:
-                        log_warning("Failed to convert response to response_model")
+                        print("Failed to convert response to response_model")
                 except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
+                    print(f"Failed to convert response to output model: {e}")
             else:
-                log_warning("Something went wrong. Run response content is not a string")
+                print("Something went wrong. Run response content is not a string")
         elif self._member_response_model is not None:
             if isinstance(run_response.content, str):
                 try:
@@ -1346,16 +1444,16 @@ class Team:
                         run_response.content = parsed_response_content
                         run_response.content_type = self._member_response_model.__name__
                     else:
-                        log_warning("Failed to convert response to response_model")
+                        print("Failed to convert response to response_model")
                 except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
+                    print(f"Failed to convert response to output model: {e}")
             else:
-                log_warning("Something went wrong. Run response content is not a string")
+                print("Something went wrong. Run response content is not a string")
 
         # 8. Log Team Run
         await self._alog_team_run()
 
-        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
+        print(f"Team Run End: {self.run_id}")
 
     async def _arun_stream(
         self,
@@ -1575,7 +1673,7 @@ class Team:
                 event=RunEvent.run_completed,
             )
 
-        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
+        print(f"Team Run End: {self.run_id}")
 
     ###########################################################################
     # Print Response
@@ -1666,7 +1764,6 @@ class Team:
         from rich.status import Status
         from rich.text import Text
 
-        from agno.utils.response import format_tool_calls
 
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
@@ -1925,7 +2022,6 @@ class Team:
         from rich.status import Status
         from rich.text import Text
 
-        from agno.utils.response import format_tool_calls
 
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
@@ -2459,8 +2555,6 @@ class Team:
         from rich.markdown import Markdown
         from rich.status import Status
         from rich.text import Text
-
-        from agno.utils.response import format_tool_calls
 
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
@@ -3157,12 +3251,12 @@ class Team:
             try:
                 return JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
             except Exception as e:
-                log_warning(f"Failed to convert response to JSON: {e}")
+                print(f"Failed to convert response to JSON: {e}")
         else:
             try:
                 return JSON(json.dumps(run_response.content), indent=4)
             except Exception as e:
-                log_warning(f"Failed to convert response to JSON: {e}")
+                print(f"Failed to convert response to JSON: {e}")
 
     def cli_app(
         self,
@@ -3244,7 +3338,7 @@ class Team:
             yield self._create_run_response(
                 from_run_response=run_response, content="Reasoning started", event=RunEvent.reasoning_started
             )
-        log_debug("Reasoning started")
+        print("Reasoning started")
 
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
@@ -3252,7 +3346,7 @@ class Team:
         if reasoning_model is None and self.model is not None:
             reasoning_model = self.model.__class__(id=self.model.id)  # type: ignore
         if reasoning_model is None:
-            log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
+            print("Reasoning error. Reasoning model is None, continuing regular session...")
             return
 
         # If a reasoning model is provided, use it to generate reasoning
@@ -3271,7 +3365,7 @@ class Team:
                     reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
                 )
                 if reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    print("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
             # Use OpenAI o3 for reasoning
             elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3"):
@@ -3283,10 +3377,10 @@ class Team:
                     reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
                 )
                 if reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    print("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
             else:
-                log_info(f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model.")
+                print(f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model.")
 
             if reasoning_message:
                 run_messages.messages.append(reasoning_message)
@@ -3316,9 +3410,9 @@ class Team:
             next_action = NextAction.CONTINUE
             reasoning_messages: List[Message] = []
             all_reasoning_steps: List[ReasoningStep] = []
-            log_debug("Starting Reasoning", center=True, symbol="=")
+            print("Starting Reasoning")
             while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
-                log_debug(f"Step {step_count}", center=True, symbol="-")
+                print(f"Step {step_count}")
                 step_count += 1
                 try:
                     # Run the reasoning agent
@@ -3326,11 +3420,11 @@ class Team:
                         messages=run_messages.get_input_messages()
                     )
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
-                        log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
+                        print("Reasoning error. Reasoning response is empty, continuing regular session...")
                         break
 
                     if reasoning_agent_response.content.reasoning_steps is None:
-                        log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
+                        print("Reasoning error. Reasoning steps are empty, continuing regular session...")
                         break
 
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
@@ -3364,11 +3458,11 @@ class Team:
                     if next_action == NextAction.FINAL_ANSWER:
                         break
                 except Exception as e:
-                    log_error(f"Reasoning error: {e}")
+                    print(f"Reasoning error: {e}")
                     break
 
-            log_debug(f"Total Reasoning steps: {len(all_reasoning_steps)}")
-            log_debug("Reasoning finished", center=True, symbol="=")
+            print(f"Total Reasoning steps: {len(all_reasoning_steps)}")
+            print("Reasoning finished")
 
             # Update the messages_for_model to include reasoning messages
             update_messages_with_reasoning(
@@ -3398,7 +3492,7 @@ class Team:
         if reasoning_model is None and self.model is not None:
             reasoning_model = self.model.__class__(id=self.model.id)  # type: ignore
         if reasoning_model is None:
-            log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
+            print("Reasoning error. Reasoning model is None, continuing regular session...")
             return
 
         # If a reasoning model is provided, use it to generate reasoning
@@ -3417,7 +3511,7 @@ class Team:
                     reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
                 )
                 if reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    print("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
             elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3"):
                 from agno.reasoning.openai import aget_openai_reasoning
@@ -3428,10 +3522,10 @@ class Team:
                     reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
                 )
                 if reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    print("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
             else:
-                log_info(f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model.")
+                print(f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model.")
 
             if reasoning_message:
                 run_messages.messages.append(reasoning_message)
@@ -3461,9 +3555,9 @@ class Team:
             next_action = NextAction.CONTINUE
             reasoning_messages: List[Message] = []
             all_reasoning_steps: List[ReasoningStep] = []
-            log_debug("Starting Reasoning", center=True, symbol="=")
+            print("Starting Reasoning")
             while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
-                log_debug(f"Step {step_count}", center=True, symbol="-")
+                print(f"Step {step_count}")
                 step_count += 1
                 try:
                     # Run the reasoning agent
@@ -3471,11 +3565,11 @@ class Team:
                         messages=run_messages.get_input_messages()
                     )
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
-                        log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
+                        print("Reasoning error. Reasoning response is empty, continuing regular session...")
                         break
 
                     if reasoning_agent_response.content.reasoning_steps is None:
-                        log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
+                        print("Reasoning error. Reasoning steps are empty, continuing regular session...")
                         break
 
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
@@ -3509,11 +3603,11 @@ class Team:
                     if next_action == NextAction.FINAL_ANSWER:
                         break
                 except Exception as e:
-                    log_error(f"Reasoning error: {e}")
+                    print(f"Reasoning error: {e}")
                     break
 
-            log_debug(f"Total Reasoning steps: {len(all_reasoning_steps)}")
-            log_debug("Reasoning finished", center=True, symbol="=")
+            print(f"Total Reasoning steps: {len(all_reasoning_steps)}")
+            print("Reasoning finished")
 
             # Update the messages_for_model to include reasoning messages
             update_messages_with_reasoning(
@@ -3595,7 +3689,7 @@ class Team:
     def _resolve_run_context(self) -> None:
         from inspect import signature
 
-        log_debug("Resolving context")
+        print("Resolving context")
         if self.context is not None:
             if isinstance(self.context, dict):
                 for ctx_key, ctx_value in self.context.items():
@@ -3609,11 +3703,11 @@ class Team:
                             if resolved_ctx_value is not None:
                                 self.context[ctx_key] = resolved_ctx_value
                         except Exception as e:
-                            log_warning(f"Failed to resolve context for {ctx_key}: {e}")
+                            print(f"Failed to resolve context for {ctx_key}: {e}")
                     else:
                         self.context[ctx_key] = ctx_value
             else:
-                log_warning("Context is not a dict")
+                print("Context is not a dict")
 
     def _configure_model(self, show_tool_calls: bool = False) -> None:
         # Set the default model
@@ -3621,14 +3715,14 @@ class Team:
             try:
                 from agno.models.ollama import Ollama
             except ModuleNotFoundError as e:
-                log_exception(e)
-                log_error(
+                print(e)
+                print(
                     "Agno agents use `openai` as the default model provider. "
                     "Please provide a `model` or install `openai`."
                 )
                 exit(1)
 
-            log_info("Setting default model to OpenAI Chat")
+            print("Setting default model to OpenAI Chat")
             self.model = Ollama()
 
         # Update the response_format on the Model
@@ -3642,13 +3736,13 @@ class Team:
                     self.model.response_format = json_response_format
                     self.model.structured_outputs = False
                 else:
-                    log_debug("Setting Model.response_format to Agent.response_model")
+                    print("Setting Model.response_format to Agent.response_model")
                     self.model.response_format = self.response_model
                     self.model.structured_outputs = True
 
             elif self.model.supports_json_schema_outputs:
                 if self.use_json_mode:
-                    log_debug("Setting Model.response_format to JSON response mode")
+                    print("Setting Model.response_format to JSON response mode")
                     self.model.response_format = {
                         "type": "json_schema",
                         "json_schema": {
@@ -3682,7 +3776,7 @@ class Team:
 
         # Get Agent tools
         if len(tools) > 0:
-            log_debug("Processing tools for model")
+            print("Processing tools for model")
 
             # Check if we need strict mode for the model
             strict = False
@@ -3694,7 +3788,7 @@ class Team:
                     # If a dict is passed, it is a builtin tool
                     # that is run by the model provider and not the Agent
                     self._tools_for_model.append(tool)
-                    log_debug(f"Included builtin tool {tool}")
+                    print(f"Included builtin tool {tool}")
 
                 elif isinstance(tool, Toolkit):
                     # For each function in the toolkit and process entrypoint
@@ -3707,7 +3801,7 @@ class Team:
                                 func.strict = True
                             self._functions_for_model[name] = func
                             self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                            log_debug(f"Included function {name} from {tool.name}")
+                            print(f"Included function {name} from {tool.name}")
 
                 elif isinstance(tool, Function):
                     if tool.name not in self._functions_for_model:
@@ -3717,7 +3811,7 @@ class Team:
                             tool.strict = True
                         self._functions_for_model[tool.name] = tool
                         self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                        log_debug(f"Included function {tool.name}")
+                        print(f"Included function {tool.name}")
 
                 elif callable(tool):
                     # We add the tools, which are callable functions
@@ -3728,9 +3822,9 @@ class Team:
                             func.strict = True
                         self._functions_for_model[func.name] = func
                         self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                        log_debug(f"Included function {func.name}")
+                        print(f"Included function {func.name}")
                     except Exception as e:
-                        log_warning(f"Could not add function {tool}: {e}")
+                        print(f"Could not add function {tool}: {e}")
 
             # Set tools on the model
             model.set_tools(tools=self._tools_for_model)
@@ -3964,7 +4058,7 @@ class Team:
                 for _msg in history_copy:
                     _msg.from_history = True
 
-                log_debug(f"Adding {len(history_copy)} messages from history")
+                print(f"Adding {len(history_copy)} messages from history")
 
                 # Extend the messages with the history
                 run_messages.messages += history_copy
@@ -4028,7 +4122,7 @@ class Team:
             try:
                 return Message.model_validate(message)
             except Exception as e:
-                log_warning(f"Failed to validate message: {e}")
+                print(f"Failed to validate message: {e}")
 
     def _format_message_with_state_variables(self, message: str) -> Any:
         """Format a message with the session state variables."""
@@ -4058,7 +4152,7 @@ class Team:
         try:
             return json.dumps(context, indent=2, default=str)
         except (TypeError, ValueError, OverflowError) as e:
-            log_warning(f"Failed to convert context to JSON: {e}")
+            print(f"Failed to convert context to JSON: {e}")
             # Attempt a fallback conversion for non-serializable objects
             sanitized_context = {}
             for key, value in context.items():
@@ -4067,14 +4161,14 @@ class Team:
                     json.dumps({key: value}, default=str)
                     sanitized_context[key] = value
                 except Exception as e:
-                    log_error(f"Failed to serialize to JSON: {e}")
+                    print(f"Failed to serialize to JSON: {e}")
                     # If serialization fails, convert to string representation
                     sanitized_context[key] = str(value)
 
             try:
                 return json.dumps(sanitized_context, indent=2)
             except Exception as e:
-                log_error(f"Failed to convert sanitized context to JSON: {e}")
+                print(f"Failed to convert sanitized context to JSON: {e}")
                 return str(context)
 
     def _get_json_output_prompt(self) -> str:
@@ -4135,7 +4229,7 @@ class Team:
                         json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2)}"
                         json_output_prompt += "\n</json_field_properties>"
             else:
-                log_warning(f"Could not build json schema for {self.response_model}")
+                print(f"Could not build json schema for {self.response_model}")
         else:
             json_output_prompt += "Provide the output as JSON."
 
@@ -4209,7 +4303,7 @@ class Team:
         elif isinstance(state, dict):
             self.memory.set_team_context_text(json.dumps(state))  # type: ignore
         msg = f"Current team context: {self.memory.get_team_context_str()}"  # type: ignore
-        log_debug(msg)  # type: ignore
+        print(msg)  # type: ignore
         return msg
 
     def get_run_member_agents_function(
@@ -4242,7 +4336,6 @@ class Team:
                 str: The responses from the member agents.
             """
             # Make sure for the member agent, we are using the agent logger
-            use_agent_logger()
             self.memory = cast(TeamMemory, self.memory)
 
             # 2. Determine team context to send
@@ -4322,7 +4415,6 @@ class Team:
                 self._update_team_state(member_agent.run_response)  # type: ignore
 
             # Afterward, switch back to the team logger
-            use_team_logger()
 
         async def arun_member_agents(
             task_description: str, expected_output: Optional[str] = None
@@ -4338,7 +4430,6 @@ class Team:
                 str: The responses from the member agents.
             """
             # Make sure for the member agent, we are using the agent logger
-            use_agent_logger()
             self.memory = cast(TeamMemory, self.memory)
 
             # 2. Determine team context to send
@@ -4420,7 +4511,6 @@ class Team:
                 yield result
 
             # Afterward, switch back to the team logger
-            use_team_logger()
 
         if async_mode:
             run_member_agents_function = arun_member_agents  # type: ignore
@@ -4495,7 +4585,6 @@ class Team:
                 member_agent_task += f"\n\n{team_member_interactions_str}"
 
             # Make sure for the member agent, we are using the agent logger
-            use_agent_logger()
 
             if stream:
                 member_agent_run_response_stream = member_agent.run(
@@ -4529,7 +4618,6 @@ class Team:
                         yield str(e)
 
             # Afterward, switch back to the team logger
-            use_team_logger()
 
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
@@ -4595,7 +4683,6 @@ class Team:
                 member_agent_task += f"\n\n{team_member_interactions_str}"
 
             # Make sure for the member agent, we are using the agent logger
-            use_agent_logger()
 
             if stream:
                 member_agent_run_response_stream = await member_agent.arun(
@@ -4627,7 +4714,6 @@ class Team:
                         yield str(e)
 
             # Afterward, switch back to the team logger
-            use_team_logger()
 
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
@@ -4724,7 +4810,6 @@ class Team:
                 self._member_response_model = member_agent.response_model
 
             # Make sure for the member agent, we are using the agent logger
-            use_agent_logger()
 
             # If found in subteam, include the path in the task description
             member_agent_task = message.get_content_string()
@@ -4762,7 +4847,6 @@ class Team:
                         yield str(e)
 
             # Afterward, switch back to the team logger
-            use_team_logger()
 
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
@@ -4807,7 +4891,6 @@ class Team:
                 self._member_response_model = member_agent.response_model
 
             # Make sure for the member agent, we are using the agent logger
-            use_agent_logger()
 
             # If found in subteam, include the path in the task description
             member_agent_task = message.get_content_string()
@@ -4846,7 +4929,6 @@ class Team:
                         yield str(e)
 
             # Afterward, switch back to the team logger
-            use_team_logger()
 
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
@@ -4888,9 +4970,9 @@ class Team:
 
             self.memory.load_user_memories()
             if self.user_id is not None:
-                log_debug(f"Memories loaded for user: {self.user_id}")
+                print(f"Memories loaded for user: {self.user_id}")
             else:
-                log_debug("Memories loaded")
+                print("Memories loaded")
 
     def read_from_storage(self) -> Optional[TeamSession]:
         """Load the TeamSession from storage
@@ -4934,7 +5016,6 @@ class Team:
 
     def load_team_session(self, session: TeamSession):
         """Load the existing TeamSession from an TeamSession (from the database)"""
-        from agno.utils.merge_dict import merge_dictionaries
 
         # Get the team_id, user_id and session_id from the database
         if self.team_id is None and session.team_id is not None:
@@ -5022,20 +5103,20 @@ class Team:
                     try:
                         self.memory.runs = [TeamRun.from_dict(m) for m in session.memory["runs"]]
                     except Exception as e:
-                        log_warning(f"Failed to load runs from memory: {e}")
+                        print(f"Failed to load runs from memory: {e}")
                 if "messages" in session.memory:
                     try:
                         self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]]
                     except Exception as e:
-                        log_warning(f"Failed to load messages from memory: {e}")
+                        print(f"Failed to load messages from memory: {e}")
                 if "memories" in session.memory:
                     try:
                         self.memory.memories = [Memory.model_validate(m) for m in session.memory["memories"]]
                     except Exception as e:
-                        log_warning(f"Failed to load user memories: {e}")
+                        print(f"Failed to load user memories: {e}")
             except Exception as e:
-                log_warning(f"Failed to load AgentMemory: {e}")
-        log_debug(f"-*- TeamSession loaded: {session.session_id}")
+                print(f"Failed to load AgentMemory: {e}")
+        print(f"-*- TeamSession loaded: {session.session_id}")
 
     ###########################################################################
     # Logging
@@ -5122,7 +5203,7 @@ class Team:
             run_data = self._create_run_data()
             team_session: TeamSession = self.team_session or self._get_team_session()
         except Exception as e:
-            log_debug(f"Could not create team event: {e}")
+            print(f"Could not create team event: {e}")
 
     async def _alog_team_run(self) -> None:
         if not self.telemetry and not self.monitoring:
@@ -5131,7 +5212,7 @@ class Team:
             run_data = self._create_run_data()
             team_session: TeamSession = self.team_session or self._get_team_session()
         except Exception as e:
-            log_debug(f"Could not create team event: {e}")
+            print(f"Could not create team event: {e}")
 
     def _log_team_session(self):
         if not (self.telemetry or self.monitoring):
@@ -5140,7 +5221,7 @@ class Team:
         try:
             team_session: TeamSession = self.team_session or self._get_team_session()
         except Exception as e:
-            log_debug(f"Could not create team monitor: {e}")
+            print(f"Could not create team monitor: {e}")
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Team":
         """Create a deep copy of the Team with optional updates.
@@ -5200,7 +5281,7 @@ class Team:
                 try:
                     return copy(field_value)
                 except Exception as e:
-                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    print(f"Failed to copy field: {field_name} - {e}")
                     return field_value
 
         # For compound types, attempt a deep copy
@@ -5208,11 +5289,11 @@ class Team:
             try:
                 return deepcopy(field_value)
             except Exception as e:
-                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+                print(f"Failed to deepcopy field: {field_name} - {e}")
                 try:
                     return copy(field_value)
                 except Exception as e:
-                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    print(f"Failed to copy field: {field_name} - {e}")
                     return field_value
 
         # For pydantic models, attempt a model_copy
@@ -5223,7 +5304,7 @@ class Team:
                 try:
                     return field_value.model_copy(deep=False)
                 except Exception as e:
-                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    print(f"Failed to copy field: {field_name} - {e}")
                     return field_value
 
         # For other types, attempt a shallow copy first

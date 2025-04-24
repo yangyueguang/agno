@@ -13,7 +13,7 @@ except ImportError:
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.utils.log import log_debug, log_info, logger
+
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -34,7 +34,7 @@ class ChromaDb(VectorDb):
 
         # Embedder for embedding the document contents
         if embedder is None:
-            from agno.embedder.ollama import OllamaEmbedder
+            from agno.embedder import OllamaEmbedder
 
             embedder = OllamaEmbedder()
         self.embedder: Embedder = embedder
@@ -60,12 +60,12 @@ class ChromaDb(VectorDb):
     def client(self) -> ClientAPI:
         if self._client is None:
             if not self.persistent_client:
-                log_debug("Creating Chroma Client")
+                print("Creating Chroma Client")
                 self._client = ChromaDbClient(
                     **self.kwargs,
                 )
             elif self.persistent_client:
-                log_debug("Creating Persistent Chroma Client")
+                print("Creating Persistent Chroma Client")
                 self._client = PersistentChromaDbClient(
                     path=self.path,
                     **self.kwargs,
@@ -75,10 +75,10 @@ class ChromaDb(VectorDb):
     def create(self) -> None:
         """Create the collection in ChromaDb."""
         if self.exists():
-            log_debug(f"Collection already exists: {self.collection_name}")
+            print(f"Collection already exists: {self.collection_name}")
             self._collection = self.client.get_collection(name=self.collection_name)
         else:
-            log_debug(f"Creating collection: {self.collection_name}")
+            print(f"Creating collection: {self.collection_name}")
             self._collection = self.client.create_collection(
                 name=self.collection_name, metadata={"hnsw:space": self.distance.value}
             )
@@ -91,7 +91,7 @@ class ChromaDb(VectorDb):
             bool: True if document exists, False otherwise.
         """
         if not self.client:
-            logger.warning("Client not initialized")
+            print("Client not initialized")
             return False
 
         try:
@@ -102,7 +102,7 @@ class ChromaDb(VectorDb):
             if cleaned_content in existing_documents:  # type: ignore
                 return True
         except Exception as e:
-            logger.error(f"Document does not exist: {e}")
+            print(f"Document does not exist: {e}")
         return False
 
     def name_exists(self, name: str) -> bool:
@@ -118,7 +118,7 @@ class ChromaDb(VectorDb):
                     if name in collection:
                         return True
             except Exception as e:
-                logger.error(f"Document with given name does not exist: {e}")
+                print(f"Document with given name does not exist: {e}")
         return False
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
@@ -128,7 +128,7 @@ class ChromaDb(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
-        log_debug(f"Inserting {len(documents)} documents")
+        print(f"Inserting {len(documents)} documents")
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
@@ -145,14 +145,14 @@ class ChromaDb(VectorDb):
             docs.append(cleaned_content)
             ids.append(doc_id)
             docs_metadata.append(document.meta_data)
-            log_debug(f"Inserted document: {document.id} | {document.name} | {document.meta_data}")
+            print(f"Inserted document: {document.id} | {document.name} | {document.meta_data}")
 
         if self._collection is None:
-            logger.warning("Collection does not exist")
+            print("Collection does not exist")
         else:
             if len(docs) > 0:
                 self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
-                log_debug(f"Committed {len(docs)} documents")
+                print(f"Committed {len(docs)} documents")
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in ChromaDB."""
@@ -165,7 +165,7 @@ class ChromaDb(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        log_debug(f"Upserting {len(documents)} documents")
+        print(f"Upserting {len(documents)} documents")
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
@@ -182,14 +182,14 @@ class ChromaDb(VectorDb):
             docs.append(cleaned_content)
             ids.append(doc_id)
             docs_metadata.append(document.meta_data)
-            log_debug(f"Upserted document: {document.id} | {document.name} | {document.meta_data}")
+            print(f"Upserted document: {document.id} | {document.name} | {document.meta_data}")
 
         if self._collection is None:
-            logger.warning("Collection does not exist")
+            print("Collection does not exist")
         else:
             if len(docs) > 0:
                 self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
-                log_debug(f"Committed {len(docs)} documents")
+                print(f"Committed {len(docs)} documents")
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Search the collection for a query.
@@ -203,7 +203,7 @@ class ChromaDb(VectorDb):
         """
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            print(f"Error getting embedding for Query: {query}")
             return []
 
         if not self._collection:
@@ -240,7 +240,7 @@ class ChromaDb(VectorDb):
                     )
                 )
         except Exception as e:
-            logger.error(f"Error building search results: {e}")
+            print(f"Error building search results: {e}")
 
         if self.reranker:
             search_results = self.reranker.rerank(query=query, documents=search_results)
@@ -250,7 +250,7 @@ class ChromaDb(VectorDb):
     def drop(self) -> None:
         """Delete the collection."""
         if self.exists():
-            log_debug(f"Deleting collection: {self.collection_name}")
+            print(f"Deleting collection: {self.collection_name}")
             self.client.delete_collection(name=self.collection_name)
 
     def exists(self) -> bool:
@@ -259,7 +259,7 @@ class ChromaDb(VectorDb):
             self.client.get_collection(name=self.collection_name)
             return True
         except Exception as e:
-            log_debug(f"Collection does not exist: {e}")
+            print(f"Collection does not exist: {e}")
         return False
 
     def get_count(self) -> int:
@@ -269,7 +269,7 @@ class ChromaDb(VectorDb):
                 collection: Collection = self.client.get_collection(name=self.collection_name)
                 return collection.count()
             except Exception as e:
-                logger.error(f"Error getting count: {e}")
+                print(f"Error getting count: {e}")
         return 0
 
     def optimize(self) -> None:
@@ -280,7 +280,7 @@ class ChromaDb(VectorDb):
             self.client.delete_collection(name=self.collection_name)
             return True
         except Exception as e:
-            logger.error(f"Error clearing collection: {e}")
+            print(f"Error clearing collection: {e}")
             return False
 
     async def async_create(self) -> None:

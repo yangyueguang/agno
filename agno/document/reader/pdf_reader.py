@@ -5,7 +5,7 @@ from typing import IO, Any, List, Union
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import log_info, logger
+
 
 try:
     from pypdf import PdfReader as DocumentReader  # noqa: F401
@@ -102,12 +102,12 @@ class PDFReader(BasePDFReader):
         except Exception:
             doc_name = "pdf"
 
-        log_info(f"Reading: {doc_name}")
+        print(f"Reading: {doc_name}")
 
         try:
             doc_reader = DocumentReader(pdf)
         except PdfStreamError as e:
-            logger.error(f"Error reading PDF: {e}")
+            print(f"Error reading PDF: {e}")
             return []
 
         documents = []
@@ -133,12 +133,12 @@ class PDFReader(BasePDFReader):
         except Exception:
             doc_name = "pdf"
 
-        log_info(f"Reading: {doc_name}")
+        print(f"Reading: {doc_name}")
 
         try:
             doc_reader = DocumentReader(pdf)
         except PdfStreamError as e:
-            logger.error(f"Error reading PDF: {e}")
+            print(f"Error reading PDF: {e}")
             return []
 
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
@@ -173,7 +173,7 @@ class PDFUrlReader(BasePDFReader):
 
         import httpx
 
-        log_info(f"Reading: {url}")
+        print(f"Reading: {url}")
         # Retry the request up to 3 times with exponential backoff
         for attempt in range(3):
             try:
@@ -181,16 +181,16 @@ class PDFUrlReader(BasePDFReader):
                 break
             except httpx.RequestError as e:
                 if attempt == 2:  # Last attempt
-                    logger.error(f"Failed to fetch PDF after 3 attempts: {e}")
+                    print(f"Failed to fetch PDF after 3 attempts: {e}")
                     raise
                 wait_time = 2**attempt  # Exponential backoff: 1, 2, 4 seconds
-                logger.warning(f"Request failed, retrying in {wait_time} seconds...")
+                print(f"Request failed, retrying in {wait_time} seconds...")
                 sleep(wait_time)
 
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
+            print(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
             raise
 
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
@@ -221,7 +221,7 @@ class PDFUrlReader(BasePDFReader):
         except ImportError:
             raise ImportError("`httpx` not installed. Please install it via `pip install httpx`.")
 
-        log_info(f"Reading: {url}")
+        print(f"Reading: {url}")
 
         async with httpx.AsyncClient() as client:
             # Retry the request up to 3 times with exponential backoff
@@ -231,16 +231,16 @@ class PDFUrlReader(BasePDFReader):
                     break
                 except httpx.RequestError as e:
                     if attempt == 2:  # Last attempt
-                        logger.error(f"Failed to fetch PDF after 3 attempts: {e}")
+                        print(f"Failed to fetch PDF after 3 attempts: {e}")
                         raise
                     wait_time = 2**attempt
-                    logger.warning(f"Request failed, retrying in {wait_time} seconds...")
+                    print(f"Request failed, retrying in {wait_time} seconds...")
                     await asyncio.sleep(wait_time)
 
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
+                print(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
                 raise
 
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
@@ -282,7 +282,7 @@ class PDFImageReader(BasePDFReader):
         except Exception:
             doc_name = "pdf"
 
-        log_info(f"Reading: {doc_name}")
+        print(f"Reading: {doc_name}")
         doc_reader = DocumentReader(pdf)
 
         documents = []
@@ -306,7 +306,7 @@ class PDFImageReader(BasePDFReader):
         except Exception:
             doc_name = "pdf"
 
-        log_info(f"Reading: {doc_name}")
+        print(f"Reading: {doc_name}")
         doc_reader = DocumentReader(pdf)
 
         documents = await asyncio.gather(
@@ -333,7 +333,7 @@ class PDFUrlImageReader(BasePDFReader):
         import httpx
 
         # Read the PDF from the URL
-        log_info(f"Reading: {url}")
+        print(f"Reading: {url}")
         response = httpx.get(url)
 
         doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
@@ -357,7 +357,7 @@ class PDFUrlImageReader(BasePDFReader):
 
         import httpx
 
-        log_info(f"Reading: {url}")
+        print(f"Reading: {url}")
 
         async with httpx.AsyncClient() as client:
             response = await client.get(url)

@@ -2,8 +2,8 @@ from typing import List
 
 from agno.models.message import Message
 from agno.reasoning.step import NextAction, ReasoningStep
-from agno.run.messages import RunMessages
-from agno.utils.log import logger
+from agno.run import RunMessages
+
 
 
 def get_next_action(reasoning_step: ReasoningStep) -> NextAction:
@@ -12,7 +12,7 @@ def get_next_action(reasoning_step: ReasoningStep) -> NextAction:
         try:
             return NextAction(next_action)
         except ValueError:
-            logger.warning(f"Reasoning error. Invalid next action: {next_action}")
+            print(f"Reasoning error. Invalid next action: {next_action}")
             return NextAction.FINAL_ANSWER
     return next_action
 

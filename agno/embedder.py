@@ -1,8 +1,22 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.embedder.base import Embedder
-from agno.utils.log import logger
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
+
+@dataclass
+class Embedder:
+    """Base class for managing embedders"""
+
+    dimensions: Optional[int] = 1536
+
+    def get_embedding(self, text: str) -> List[float]:
+        raise NotImplementedError
+
+    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
+        raise NotImplementedError
+
 
 try:
     import importlib.metadata as metadata
@@ -77,11 +91,11 @@ class OllamaEmbedder(Embedder):
             response = self._response(text=text)
             embedding = response.get("embeddings", [])
             if len(embedding) != self.dimensions:
-                logger.warning(f"Expected embedding dimension {self.dimensions}, but got {len(embedding)}")
+                print(f"Expected embedding dimension {self.dimensions}, but got {len(embedding)}")
                 return []
             return embedding
         except Exception as e:
-            logger.warning(e)
+            print(e)
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import log_debug, log_info, logger
+
 
 
 class URLReader(Reader):
@@ -19,7 +19,7 @@ class URLReader(Reader):
         except ImportError:
             raise ImportError("`httpx` not installed. Please install it via `pip install httpx`.")
 
-        log_info(f"Reading: {url}")
+        print(f"Reading: {url}")
         # Retry the request up to 3 times with exponential backoff
         for attempt in range(3):
             try:
@@ -27,22 +27,22 @@ class URLReader(Reader):
                 break
             except httpx.RequestError as e:
                 if attempt == 2:  # Last attempt
-                    logger.error(f"Failed to fetch PDF after 3 attempts: {e}")
+                    print(f"Failed to fetch PDF after 3 attempts: {e}")
                     raise
                 wait_time = 2**attempt  # Exponential backoff: 1, 2, 4 seconds
-                logger.warning(f"Request failed, retrying in {wait_time} seconds...")
+                print(f"Request failed, retrying in {wait_time} seconds...")
                 sleep(wait_time)
 
         try:
-            log_debug(f"Status: {response.status_code}")
-            log_debug(f"Content size: {len(response.content)} bytes")
+            print(f"Status: {response.status_code}")
+            print(f"Content size: {len(response.content)} bytes")
         except Exception:
             pass
 
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
+            print(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
             raise
 
         # Create a clean document name from the URL

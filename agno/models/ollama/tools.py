@@ -6,14 +6,26 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, 
 from agno.models.message import Message, MessageMetrics
 from agno.models.ollama.chat import ChatResponse, Ollama, OllamaResponseUsage
 from agno.models.response import ModelResponse
-from agno.tools.function import FunctionCall
-from agno.utils.log import log_warning
-from agno.utils.timer import Timer
-from agno.utils.tools import (
-    extract_tool_call_from_string,
-    remove_tool_calls_from_string,
-)
+from agno.tools import FunctionCall
 
+from agno.models.base import Timer
+
+
+def extract_tool_call_from_string(text: str, start_tag: str = "<tool_call>", end_tag: str = "</tool_call>"):
+    start_index = text.find(start_tag) + len(start_tag)
+    end_index = text.find(end_tag)
+
+    # Extracting the content between the tags
+    return text[start_index:end_index].strip()
+
+
+def remove_tool_calls_from_string(text: str, start_tag: str = "<tool_call>", end_tag: str = "</tool_call>"):
+    """Remove multiple tool calls from a string."""
+    while start_tag in text and end_tag in text:
+        start_index = text.find(start_tag)
+        end_index = text.find(end_tag) + len(end_tag)
+        text = text[:start_index] + text[end_index:]
+    return text
 
 @dataclass
 class ToolCall:
@@ -233,7 +245,7 @@ class OllamaTools(Ollama):
 
         response_message = response_delta.get("message")
 
-        # log_info(f"Response message: {response_delta}")
+        # print(f"Response message: {response_delta}")
 
         if response_message is not None:
             content_delta = response_message.get("content", "")
@@ -268,7 +280,7 @@ class OllamaTools(Ollama):
                         model_response.tool_calls = _parse_tool_calls_from_content(tool_call_data.tool_call_content)
                         tool_call_data = ToolCall()
                     except Exception as e:
-                        log_warning(e)
+                        print(e)
                         pass
 
             # Yield content if not a tool call and content is not None

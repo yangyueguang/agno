@@ -6,14 +6,130 @@ from types import AsyncGeneratorType, GeneratorType
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
-from agno.exceptions import AgentRunException
+from agno.tools import AgentRunException
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent
-from agno.tools.function import Function, FunctionCall
-from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.timer import Timer
-from agno.utils.tools import get_function_call_for_tool_call
+from agno.tools import Function, FunctionCall
+import json
+
+from time import perf_counter
+
+class Timer:
+    """Timer class for timing code execution"""
+
+    def __init__(self):
+        self.start_time: Optional[float] = None
+        self.end_time: Optional[float] = None
+        self.elapsed_time: Optional[float] = None
+
+    @property
+    def elapsed(self) -> float:
+        return self.elapsed_time or (perf_counter() - self.start_time) if self.start_time else 0.0
+
+    def start(self) -> float:
+        self.start_time = perf_counter()
+        return self.start_time
+
+    def stop(self) -> float:
+        self.end_time = perf_counter()
+        if self.start_time is not None:
+            self.elapsed_time = self.end_time - self.start_time
+        return self.end_time
+
+    def __enter__(self):
+        self.start_time = perf_counter()
+        return self
+
+    def __exit__(self, *args):
+        self.end_time = perf_counter()
+        if self.start_time is not None:
+            self.elapsed_time = self.end_time - self.start_time
+
+
+def get_function_call(
+    name: str,
+    arguments: Optional[str] = None,
+    call_id: Optional[str] = None,
+    functions: Optional[Dict[str, Function]] = None,
+) -> Optional[FunctionCall]:
+    print(f"Getting function {name}")
+    if functions is None:
+        return None
+
+    function_to_call: Optional[Function] = None
+    if name in functions:
+        function_to_call = functions[name]
+    if function_to_call is None:
+        print(f"Function {name} not found")
+        return None
+
+    function_call = FunctionCall(function=function_to_call)
+    if call_id is not None:
+        function_call.call_id = call_id
+    if arguments is not None and arguments != "":
+        try:
+            if function_to_call.sanitize_arguments:
+                if "None" in arguments:
+                    arguments = arguments.replace("None", "null")
+                if "True" in arguments:
+                    arguments = arguments.replace("True", "true")
+                if "False" in arguments:
+                    arguments = arguments.replace("False", "false")
+            _arguments = json.loads(arguments)
+        except Exception as e:
+            print(f"Unable to decode function arguments:\n{arguments}\nError: {e}")
+            function_call.error = (
+                f"Error while decoding function arguments: {e}\n\n"
+                f"Please make sure we can json.loads() the arguments and retry."
+            )
+            return function_call
+
+        if not isinstance(_arguments, dict):
+            print(f"Function arguments are not a valid JSON object: {arguments}")
+            function_call.error = "Function arguments are not a valid JSON object.\n\n Please fix and retry."
+            return function_call
+
+        try:
+            clean_arguments: Dict[str, Any] = {}
+            for k, v in _arguments.items():
+                if isinstance(v, str):
+                    _v = v.strip().lower()
+                    if _v in ("none", "null"):
+                        clean_arguments[k] = None
+                    elif _v == "true":
+                        clean_arguments[k] = True
+                    elif _v == "false":
+                        clean_arguments[k] = False
+                    else:
+                        clean_arguments[k] = v.strip()
+                else:
+                    clean_arguments[k] = v
+
+            function_call.arguments = clean_arguments
+        except Exception as e:
+            print(f"Unable to parsing function arguments:\n{arguments}\nError: {e}")
+            function_call.error = f"Error while parsing function arguments: {e}\n\n Please fix and retry."
+            return function_call
+    return function_call
+
+def get_function_call_for_tool_call(
+    tool_call: Dict[str, Any], functions: Optional[Dict[str, Function]] = None
+) -> Optional[FunctionCall]:
+    if tool_call.get("type") == "function":
+        _tool_call_id = tool_call.get("id")
+        _tool_call_function = tool_call.get("function")
+        if _tool_call_function is not None:
+            _tool_call_function_name = _tool_call_function.get("name")
+            _tool_call_function_arguments_str = _tool_call_function.get("arguments")
+            if _tool_call_function_name is not None:
+                return get_function_call(
+                    name=_tool_call_function_name,
+                    arguments=_tool_call_function_arguments_str,
+                    call_id=_tool_call_id,
+                    functions=functions,
+                )
+    return None
 
 
 @dataclass
@@ -166,8 +282,8 @@ class Model(ABC):
             ModelResponse: The model's response
         """
 
-        log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
-        log_debug(f"Model: {self.id}", center=True, symbol="-")
+        print(f"{self.get_provider()} Response Start")
+        print(f"Model: {self.id}")
 
         self._log_messages(messages)
         model_response = ModelResponse()
@@ -222,7 +338,7 @@ class Model(ABC):
             # No tool calls or finished processing them
             break
 
-        log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
+        print(f"{self.get_provider()} Response End")
         return model_response
 
     async def aresponse(self, messages: List[Message]) -> ModelResponse:
@@ -236,8 +352,8 @@ class Model(ABC):
             ModelResponse: The model's response
         """
 
-        log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
-        log_debug(f"Model: {self.id}", center=True, symbol="-")
+        print(f"{self.get_provider()} Async Response Start")
+        print(f"Model: {self.id}")
         self._log_messages(messages)
         model_response = ModelResponse()
 
@@ -291,7 +407,7 @@ class Model(ABC):
             # No tool calls or finished processing them
             break
 
-        log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
+        print(f"{self.get_provider()} Async Response End")
         return model_response
 
     def _process_model_response(
@@ -496,8 +612,8 @@ class Model(ABC):
             Iterator[ModelResponse]: Iterator of model responses
         """
 
-        log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
-        log_debug(f"Model: {self.id}", center=True, symbol="-")
+        print(f"{self.get_provider()} Response Stream Start")
+        print(f"Model: {self.id}")
         self._log_messages(messages)
 
         while True:
@@ -565,7 +681,7 @@ class Model(ABC):
             # No tool calls or finished processing them
             break
 
-        log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
+        print(f"{self.get_provider()} Response Stream End")
 
     async def aprocess_response_stream(
         self, messages: List[Message], assistant_message: Message, stream_data: MessageData
@@ -591,8 +707,8 @@ class Model(ABC):
             AsyncIterator[ModelResponse]: Async iterator of model responses
         """
 
-        log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
-        log_debug(f"Model: {self.id}", center=True, symbol="-")
+        print(f"{self.get_provider()} Async Response Stream Start")
+        print(f"Model: {self.id}")
         self._log_messages(messages)
 
         while True:
@@ -659,7 +775,7 @@ class Model(ABC):
             # No tool calls or finished processing them
             break
 
-        log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
+        print(f"{self.get_provider()} Async Response Stream End")
 
     def _populate_stream_data_and_assistant_message(
         self, stream_data: MessageData, assistant_message: Message, model_response: ModelResponse
@@ -802,7 +918,7 @@ class Model(ABC):
                     try:
                         additional_messages.append(Message(**m))
                     except Exception as e:
-                        log_warning(f"Failed to convert dict to Message: {e}")
+                        print(f"Failed to convert dict to Message: {e}")
 
         if a_exc.stop_execution:
             for m in additional_messages:
@@ -861,7 +977,7 @@ class Model(ABC):
                 # Set function call success to False if an exception occurred
                 function_call_success = False
             except Exception as e:
-                log_error(f"Error executing function {fc.function.name}: {e}")
+                print(f"Error executing function {fc.function.name}: {e}")
                 function_call_success = False
                 raise e
 
@@ -925,7 +1041,7 @@ class Model(ABC):
         except AgentRunException as e:
             success = e  # Pass the exception through to be handled by caller
         except Exception as e:
-            log_error(f"Error executing function {function_call.function.name}: {e}")
+            print(f"Error executing function {function_call.function.name}: {e}")
             success = False
             raise e
 
@@ -961,7 +1077,7 @@ class Model(ABC):
         for result in results:
             # If result is an exception, skip processing it
             if isinstance(result, BaseException):
-                log_error(f"Error during function call: {result}")
+                print(f"Error during function call: {result}")
                 raise result
 
             # Unpack result

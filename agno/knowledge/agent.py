@@ -7,7 +7,7 @@ from agno.document import Document
 from agno.document.chunking.fixed import FixedSizeChunking
 from agno.document.chunking.strategy import ChunkingStrategy
 from agno.document.reader.base import Reader
-from agno.utils.log import log_debug, log_info, logger
+
 from agno.vectordb import VectorDb
 
 
@@ -53,14 +53,14 @@ class AgentKnowledge(BaseModel):
         """Returns relevant documents matching a query"""
         try:
             if self.vector_db is None:
-                logger.warning("No vector db provided")
+                print("No vector db provided")
                 return []
 
             _num_documents = num_documents or self.num_documents
-            log_debug(f"Getting {_num_documents} relevant documents for query: {query}")
+            print(f"Getting {_num_documents} relevant documents for query: {query}")
             return self.vector_db.search(query=query, limit=_num_documents, filters=filters)
         except Exception as e:
-            logger.error(f"Error searching for documents: {e}")
+            print(f"Error searching for documents: {e}")
             return []
 
     async def async_search(
@@ -69,18 +69,18 @@ class AgentKnowledge(BaseModel):
         """Returns relevant documents matching a query"""
         try:
             if self.vector_db is None:
-                logger.warning("No vector db provided")
+                print("No vector db provided")
                 return []
 
             _num_documents = num_documents or self.num_documents
-            log_debug(f"Getting {_num_documents} relevant documents for query: {query}")
+            print(f"Getting {_num_documents} relevant documents for query: {query}")
             try:
                 return await self.vector_db.async_search(query=query, limit=_num_documents, filters=filters)
             except NotImplementedError:
-                logger.warning("Vector db does not support async search")
+                print("Vector db does not support async search")
                 return self.search(query=query, num_documents=_num_documents, filters=filters)
         except Exception as e:
-            logger.error(f"Error searching for documents: {e}")
+            print(f"Error searching for documents: {e}")
             return []
 
     def load(
@@ -100,18 +100,18 @@ class AgentKnowledge(BaseModel):
         """
 
         if self.vector_db is None:
-            logger.warning("No vector db provided")
+            print("No vector db provided")
             return
 
         if recreate:
-            log_info("Dropping collection")
+            print("Dropping collection")
             self.vector_db.drop()
 
         if not self.vector_db.exists():
-            log_info("Creating collection")
+            print("Creating collection")
             self.vector_db.create()
 
-        log_info("Loading knowledge base")
+        print("Loading knowledge base")
         num_documents = 0
         for document_list in self.document_lists:
             documents_to_load = document_list
@@ -132,7 +132,7 @@ class AgentKnowledge(BaseModel):
                             documents_to_load.append(doc)
                 self.vector_db.insert(documents=documents_to_load, filters=filters)
             num_documents += len(documents_to_load)
-            log_info(f"Added {len(documents_to_load)} documents to knowledge base")
+            print(f"Added {len(documents_to_load)} documents to knowledge base")
 
     async def aload(
         self,
@@ -151,18 +151,18 @@ class AgentKnowledge(BaseModel):
         """
 
         if self.vector_db is None:
-            logger.warning("No vector db provided")
+            print("No vector db provided")
             return
 
         if recreate:
-            log_info("Dropping collection")
+            print("Dropping collection")
             await self.vector_db.async_drop()
 
         if not await self.vector_db.async_exists():
-            log_info("Creating collection")
+            print("Creating collection")
             await self.vector_db.async_create()
 
-        log_info("Loading knowledge base")
+        print("Loading knowledge base")
         num_documents = 0
         async for document_list in self.async_document_lists:
             documents_to_load = document_list
@@ -182,7 +182,7 @@ class AgentKnowledge(BaseModel):
                             documents_to_load.append(doc)
                 await self.vector_db.async_insert(documents=documents_to_load, filters=filters)
             num_documents += len(documents_to_load)
-            log_info(f"Added {len(documents_to_load)} documents to knowledge base")
+            print(f"Added {len(documents_to_load)} documents to knowledge base")
 
     def load_documents(
         self,
@@ -200,18 +200,18 @@ class AgentKnowledge(BaseModel):
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
 
-        log_info("Loading knowledge base")
+        print("Loading knowledge base")
         if self.vector_db is None:
-            logger.warning("No vector db provided")
+            print("No vector db provided")
             return
 
-        log_debug("Creating collection")
+        print("Creating collection")
         self.vector_db.create()
 
         # Upsert documents if upsert is True
         if upsert and self.vector_db.upsert_available():
             self.vector_db.upsert(documents=documents, filters=filters)
-            log_info(f"Loaded {len(documents)} documents to knowledge base")
+            print(f"Loaded {len(documents)} documents to knowledge base")
         else:
             # Filter out documents which already exist in the vector db
             documents_to_load = (
@@ -223,9 +223,9 @@ class AgentKnowledge(BaseModel):
             # Insert documents
             if len(documents_to_load) > 0:
                 self.vector_db.insert(documents=documents_to_load, filters=filters)
-                log_info(f"Loaded {len(documents_to_load)} documents to knowledge base")
+                print(f"Loaded {len(documents_to_load)} documents to knowledge base")
             else:
-                log_info("No new documents to load")
+                print("No new documents to load")
 
     async def async_load_documents(
         self,
@@ -242,16 +242,16 @@ class AgentKnowledge(BaseModel):
             skip_existing (bool): If True, skips documents which already exist in the vector db when inserting. Defaults to True.
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
-        log_info("Loading knowledge base")
+        print("Loading knowledge base")
         if self.vector_db is None:
-            logger.warning("No vector db provided")
+            print("No vector db provided")
             return
 
-        log_debug("Creating collection")
+        print("Creating collection")
         try:
             await self.vector_db.async_create()
         except NotImplementedError:
-            logger.warning("Vector db does not support async create")
+            print("Vector db does not support async create")
             self.vector_db.create()
 
         # Upsert documents if upsert is True
@@ -259,9 +259,9 @@ class AgentKnowledge(BaseModel):
             try:
                 await self.vector_db.async_upsert(documents=documents, filters=filters)
             except NotImplementedError:
-                logger.warning("Vector db does not support async upsert")
+                print("Vector db does not support async upsert")
                 self.vector_db.upsert(documents=documents, filters=filters)
-            log_info(f"Loaded {len(documents)} documents to knowledge base")
+            print(f"Loaded {len(documents)} documents to knowledge base")
         else:
             # Filter out documents which already exist in the vector db
             if skip_existing:
@@ -277,7 +277,7 @@ class AgentKnowledge(BaseModel):
                         if not (isinstance(exists, bool) and exists)
                     ]
                 except NotImplementedError:
-                    logger.warning("Vector db does not support async doc_exists")
+                    print("Vector db does not support async doc_exists")
                     documents_to_load = [document for document in documents if not self.vector_db.doc_exists(document)]
             else:
                 documents_to_load = documents
@@ -287,11 +287,11 @@ class AgentKnowledge(BaseModel):
                 try:
                     await self.vector_db.async_insert(documents=documents_to_load, filters=filters)
                 except NotImplementedError:
-                    logger.warning("Vector db does not support async insert")
+                    print("Vector db does not support async insert")
                     self.vector_db.insert(documents=documents_to_load, filters=filters)
-                log_info(f"Loaded {len(documents_to_load)} documents to knowledge base")
+                print(f"Loaded {len(documents_to_load)} documents to knowledge base")
             else:
-                log_info("No new documents to load")
+                print("No new documents to load")
 
     def load_document(
         self,
@@ -381,14 +381,14 @@ class AgentKnowledge(BaseModel):
     def exists(self) -> bool:
         """Returns True if the knowledge base exists"""
         if self.vector_db is None:
-            logger.warning("No vector db provided")
+            print("No vector db provided")
             return False
         return self.vector_db.exists()
 
     def delete(self) -> bool:
         """Clear the knowledge base"""
         if self.vector_db is None:
-            logger.warning("No vector db available")
+            print("No vector db available")
             return True
 
         return self.vector_db.delete()

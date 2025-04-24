@@ -3,7 +3,7 @@ from typing import List
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import log_info, logger
+
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi
@@ -20,7 +20,7 @@ class YouTubeReader(Reader):
         try:
             # Extract video ID from URL
             video_id = video_url.split("v=")[-1].split("&")[0]
-            log_info(f"Reading transcript for video: {video_id}")
+            print(f"Reading transcript for video: {video_id}")
 
             # Get transcript
             transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
@@ -47,7 +47,7 @@ class YouTubeReader(Reader):
             return documents
 
         except Exception as e:
-            logger.error(f"Error reading transcript for {video_url}: {e}")
+            print(f"Error reading transcript for {video_url}: {e}")
             return []
 
     async def async_read(self, video_url: str) -> List[Document]:

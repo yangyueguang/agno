@@ -7,7 +7,6 @@ from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, log_info, log_warning, logger
 
 try:
     from sqlalchemy.dialects import sqlite
@@ -175,7 +174,7 @@ class SqliteStorage(Storage):
                 ).scalar()
                 return result is not None
         except Exception as e:
-            logger.error(f"Error checking if table exists: {e}")
+            print(f"Error checking if table exists: {e}")
             return False
 
     def create(self) -> None:
@@ -184,7 +183,7 @@ class SqliteStorage(Storage):
         """
         self.table = self.get_table()
         if not self.table_exists():
-            log_debug(f"Creating table: {self.table.name}")
+            print(f"Creating table: {self.table.name}")
             try:
                 # First create the table without indexes
                 table_without_indexes = Table(
@@ -198,7 +197,7 @@ class SqliteStorage(Storage):
                 for idx in self.table.indexes:
                     try:
                         idx_name = idx.name
-                        log_debug(f"Creating index: {idx_name}")
+                        print(f"Creating index: {idx_name}")
 
                         # Check if index already exists using SQLite's schema table
                         with self.SqlSession() as sess:
@@ -208,14 +207,14 @@ class SqliteStorage(Storage):
                         if not exists:
                             idx.create(self.db_engine)
                         else:
-                            log_debug(f"Index {idx_name} already exists, skipping creation")
+                            print(f"Index {idx_name} already exists, skipping creation")
 
                     except Exception as e:
                         # Log the error but continue with other indexes
-                        logger.warning(f"Error creating index {idx.name}: {e}")
+                        print(f"Error creating index {idx.name}: {e}")
 
             except Exception as e:
-                logger.error(f"Error creating table: {e}")
+                print(f"Error creating table: {e}")
                 raise
 
     def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
@@ -243,10 +242,10 @@ class SqliteStorage(Storage):
                     return WorkflowSession.from_dict(result._mapping) if result is not None else None  # type: ignore
         except Exception as e:
             if "no such table" in str(e):
-                log_debug(f"Table does not exist: {self.table.name}")
+                print(f"Table does not exist: {self.table.name}")
                 self.create()
             else:
-                log_debug(f"Exception reading from table: {e}")
+                print(f"Exception reading from table: {e}")
         return None
 
     def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
@@ -280,10 +279,10 @@ class SqliteStorage(Storage):
                 return [row[0] for row in rows] if rows is not None else []
         except Exception as e:
             if "no such table" in str(e):
-                log_debug(f"Table does not exist: {self.table.name}")
+                print(f"Table does not exist: {self.table.name}")
                 self.create()
             else:
-                log_debug(f"Exception reading from table: {e}")
+                print(f"Exception reading from table: {e}")
         return []
 
     def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
@@ -325,10 +324,10 @@ class SqliteStorage(Storage):
                     return []
         except Exception as e:
             if "no such table" in str(e):
-                log_debug(f"Table does not exist: {self.table.name}")
+                print(f"Table does not exist: {self.table.name}")
                 self.create()
             else:
-                log_debug(f"Exception reading from table: {e}")
+                print(f"Exception reading from table: {e}")
         return []
 
     def upgrade_schema(self) -> None:
@@ -337,7 +336,7 @@ class SqliteStorage(Storage):
         Currently handles adding the team_session_id column for agent mode.
         """
         if not self.auto_upgrade_schema:
-            log_debug("Auto schema upgrade disabled. Skipping upgrade.")
+            print("Auto schema upgrade disabled. Skipping upgrade.")
             return
 
         try:
@@ -349,14 +348,14 @@ class SqliteStorage(Storage):
                     column_exists = any(col[1] == "team_session_id" for col in columns)
 
                     if not column_exists:
-                        log_info(f"Adding 'team_session_id' column to {self.table_name}")
+                        print(f"Adding 'team_session_id' column to {self.table_name}")
                         alter_table_query = text(f"ALTER TABLE {self.table_name} ADD COLUMN team_session_id TEXT")
                         sess.execute(alter_table_query)
                         sess.commit()
                         self._schema_up_to_date = True
-                        log_info("Schema upgrade completed successfully")
+                        print("Schema upgrade completed successfully")
         except Exception as e:
-            logger.error(f"Error during schema upgrade: {e}")
+            print(f"Error during schema upgrade: {e}")
             raise
 
     def upsert(self, session: Session, create_and_retry: bool = True) -> Optional[Session]:
@@ -462,13 +461,13 @@ class SqliteStorage(Storage):
                 sess.execute(stmt)
         except Exception as e:
             if create_and_retry and not self.table_exists():
-                log_debug(f"Table does not exist: {self.table.name}")
-                log_debug("Creating table and retrying upsert")
+                print(f"Table does not exist: {self.table.name}")
+                print("Creating table and retrying upsert")
                 self.create()
                 return self.upsert(session, create_and_retry=False)
             else:
-                log_warning(f"Exception upserting into table: {e}")
-                log_warning(
+                print(f"Exception upserting into table: {e}")
+                print(
                     "A table upgrade might be required, please review these docs for more information: https://agno.link/upgrade-schema"
                 )
                 return None
@@ -485,7 +484,7 @@ class SqliteStorage(Storage):
             ValueError: If session_id is not provided.
         """
         if session_id is None:
-            logger.warning("No session_id provided for deletion.")
+            print("No session_id provided for deletion.")
             return
 
         try:
@@ -494,18 +493,18 @@ class SqliteStorage(Storage):
                 delete_stmt = self.table.delete().where(self.table.c.session_id == session_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
-                    log_debug(f"No session found with session_id: {session_id}")
+                    print(f"No session found with session_id: {session_id}")
                 else:
-                    log_debug(f"Successfully deleted session with session_id: {session_id}")
+                    print(f"Successfully deleted session with session_id: {session_id}")
         except Exception as e:
-            logger.error(f"Error deleting session: {e}")
+            print(f"Error deleting session: {e}")
 
     def drop(self) -> None:
         """
         Drop the table from the database if it exists.
         """
         if self.table_exists():
-            log_debug(f"Deleting table: {self.table_name}")
+            print(f"Deleting table: {self.table_name}")
             # Drop with checkfirst=True to avoid errors if the table doesn't exist
             self.table.drop(self.db_engine, checkfirst=True)
             # Clear metadata to ensure indexes are recreated properly
