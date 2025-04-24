@@ -1,7 +1,4 @@
-from __future__ import annotations
-
-from agno.memory.memory import Memory
-from agno.memory.summary import SessionSummary
+from agno.memory import Memory, SessionSummary
 import warnings
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
@@ -25,67 +22,34 @@ from typing import (
 )
 import re
 import json
-
 from pydantic import BaseModel, ValidationError
 from uuid import uuid4
-
 from pydantic import BaseModel
 from agno.models.base import Timer
-from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
-from agno.memory.agent import AgentMemory, AgentRun
+from agno.memory import AgentMemory, AgentRun
 from agno.models.base import Model
+from agno.reader import Document
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent
-from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
+from agno.reasoning import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunMessages
-from agno.run import RunEvent, RunResponse, RunResponseExtraData
-from agno.storage.base import Storage
-from agno.storage.session.agent import AgentSession
+from agno.storage import Storage
+from agno.storage import AgentSession
 from agno.tools import Function
 from agno.tools import Toolkit
-from typing import Dict, List, Union
-
-from agno.models.message import Message
-
 import string
-
 from typing import Any, Dict, List, Set, Union
-
 from agno.models.message import Message
-from agno.reasoning.step import ReasoningStep
+from agno.reasoning import ReasoningStep
 from agno.run import RunEvent, RunResponse, RunResponseExtraData
 from agno.run import TeamRunResponse
-
 from typing import Any, Dict
 from dataclasses import dataclass
 from typing import Optional, Union
-
 from agno.models.message import MessageMetrics
 from typing import Optional
-
-class RunCancelledException(Exception):
-    """Exception raised when a run is cancelled."""
-
-    def __init__(self, message: str = "Operation cancelled by user"):
-        super().__init__(message)
-
-
-class ModelProviderError(Exception):
-    """Exception raised when an internal error occurs."""
-
-    def __init__(
-        self, message: str, status_code: int = 502, model_name: Optional[str] = None, model_id: Optional[str] = None
-    ):
-        self.model_name = model_name
-        self.model_id = model_id
-        self.message = message
-        self.status_code = status_code
-
-    def __str__(self) -> str:
-        return str(self.message)
-
-
 
 
 @dataclass
@@ -178,200 +142,6 @@ class SessionMetrics:
         return self + other
 
 
-def merge_dictionaries(a: Dict[str, Any], b: Dict[str, Any]) -> None:
-    """
-    Recursively merges two dictionaries.
-    If there are conflicting keys, values from 'b' will take precedence.
-
-    Args:
-        a (Dict[str, Any]): The first dictionary to be merged.
-        b (Dict[str, Any]): The second dictionary, whose values will take precedence.
-
-    Returns:
-        None: The function modifies the first dictionary in place.
-    """
-    for key in b:
-        if key in a and isinstance(a[key], dict) and isinstance(b[key], dict):
-            merge_dictionaries(a[key], b[key])
-        else:
-            a[key] = b[key]
-
-def create_panel(content, title, border_style="blue"):
-    from rich.box import HEAVY
-    from rich.panel import Panel
-
-    return Panel(
-        content, title=title, title_align="left", border_style=border_style, box=HEAVY, expand=True, padding=(1, 1)
-    )
-
-
-def escape_markdown_tags(content: str, tags: Set[str]) -> str:
-    """Escape special tags in markdown content."""
-    escaped_content = content
-    for tag in tags:
-        # Escape opening tag
-        escaped_content = escaped_content.replace(f"<{tag}>", f"&lt;{tag}&gt;")
-        # Escape closing tag
-        escaped_content = escaped_content.replace(f"</{tag}>", f"&lt;/{tag}&gt;")
-    return escaped_content
-
-
-def check_if_run_cancelled(run_response: Union[RunResponse, TeamRunResponse]):
-    if run_response.event == RunEvent.run_cancelled:
-        raise RunCancelledException()
-
-
-def update_run_response_with_reasoning(
-    run_response: Union[RunResponse, TeamRunResponse],
-    reasoning_steps: List[ReasoningStep],
-    reasoning_agent_messages: List[Message],
-) -> None:
-    if run_response.extra_data is None:
-        run_response.extra_data = RunResponseExtraData()
-
-    # Update reasoning_steps
-    if run_response.extra_data.reasoning_steps is None:
-        run_response.extra_data.reasoning_steps = reasoning_steps
-    else:
-        run_response.extra_data.reasoning_steps.extend(reasoning_steps)
-
-    # Update reasoning_messages
-    if run_response.extra_data.reasoning_messages is None:
-        run_response.extra_data.reasoning_messages = reasoning_agent_messages
-    else:
-        run_response.extra_data.reasoning_messages.extend(reasoning_agent_messages)
-
-
-def format_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[str]:
-    """Format tool calls for display in a readable format.
-
-    Args:
-        tool_calls: List of tool call dictionaries containing tool_name and tool_args
-
-    Returns:
-        List[str]: List of formatted tool call strings
-    """
-    formatted_tool_calls = []
-    for tool_call in tool_calls:
-        if "tool_name" in tool_call and "tool_args" in tool_call:
-            tool_name = tool_call["tool_name"]
-            args_str = ""
-            if "tool_args" in tool_call and tool_call["tool_args"] is not None:
-                args_str = ", ".join(f"{k}={v}" for k, v in tool_call["tool_args"].items())
-            formatted_tool_calls.append(f"{tool_name}({args_str})")
-    return formatted_tool_calls
-
-class SafeFormatter(string.Formatter):
-    def get_value(self, key, args, kwargs):
-        """Handle missing keys by returning '{key}'."""
-        if key not in kwargs:
-            return f"{key}"
-        return kwargs[key]
-
-    def format_field(self, value, format_spec):
-        """
-        If Python sees something like 'somekey:"stuff"', it tries to parse
-        it as a format spec and might raise ValueError. We catch it here
-        and just return the literal placeholder.
-        """
-        if not format_spec:
-            return super().format_field(value, format_spec)
-
-        try:
-            return super().format_field(value, format_spec)
-        except ValueError:
-            # On invalid format specifiers, keep them literal
-            return f"{{{value}:{format_spec}}}"
-
-def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
-    structured_output = None
-    try:
-        # First attempt: direct JSON validation
-        structured_output = response_model.model_validate_json(content)
-    except (ValidationError, json.JSONDecodeError):
-        # Second attempt: Extract JSON from markdown code blocks and clean
-        content = content
-
-        # Handle code blocks
-        if "```json" in content:
-            content = content.split("```json")[-1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].strip()
-
-        # Clean the JSON string
-        # Remove markdown formatting
-        content = re.sub(r"[*_`#]", "", content)
-
-        # Handle newlines and control characters
-        content = content.replace("\n", " ").replace("\r", "")
-        content = re.sub(r"[\x00-\x1F\x7F]", "", content)
-
-        # Escape quotes only in values, not keys
-        def escape_quotes_in_values(match):
-            key = match.group(1)
-            value = match.group(2)
-            # Escape quotes in the value portion only
-            escaped_value = value.replace('"', '\\"')
-            return f'"{key}": "{escaped_value}'
-
-        # Find and escape quotes in field values
-        content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
-
-        try:
-            # Try parsing the cleaned JSON
-            structured_output = response_model.model_validate_json(content)
-        except (ValidationError, json.JSONDecodeError) as e:
-            print(f"Failed to parse cleaned JSON: {e}")
-
-            try:
-                # Final attempt: Try parsing as Python dict
-                data = json.loads(content)
-                structured_output = response_model.model_validate(data)
-            except (ValidationError, json.JSONDecodeError) as e:
-                print(f"Failed to parse as Python dict: {e}")
-
-    return structured_output
-
-
-def get_text_from_message(message: Union[List, Dict, str, Message]) -> str:
-    """Return the user texts from the message"""
-
-    if isinstance(message, str):
-        return message
-    if isinstance(message, list):
-        text_messages = []
-        if len(message) == 0:
-            return ""
-
-        if "type" in message[0]:
-            for m in message:
-                m_type = m.get("type")
-                if m_type is not None and isinstance(m_type, str):
-                    m_value = m.get(m_type)
-                    if m_value is not None and isinstance(m_value, str):
-                        if m_type == "text":
-                            text_messages.append(m_value)
-                        # if m_type == "image_url":
-                        #     text_messages.append(f"Image: {m_value}")
-                        # else:
-                        #     text_messages.append(f"{m_type}: {m_value}")
-        elif "role" in message[0]:
-            for m in message:
-                m_role = m.get("role")
-                if m_role is not None and isinstance(m_role, str):
-                    m_content = m.get("content")
-                    if m_content is not None and isinstance(m_content, str):
-                        if m_role == "user":
-                            text_messages.append(m_content)
-        if len(text_messages) > 0:
-            return "\n".join(text_messages)
-    if isinstance(message, dict):
-        if "content" in message:
-            return get_text_from_message(message["content"])
-    if isinstance(message, Message) and message.content is not None:
-        return get_text_from_message(message.content)
-    return ""
-
 
 @dataclass(init=False)
 class Agent:
@@ -451,7 +221,7 @@ class Agent:
     # Enable reasoning by working through the problem step by step.
     reasoning: bool = False
     reasoning_model: Optional[Model] = None
-    reasoning_agent: Optional[Agent] = None
+    reasoning_agent: Optional['Agent'] = None
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
 
@@ -539,7 +309,7 @@ class Agent:
 
     # --- Agent Team ---
     # The team of agents that this agent can transfer tasks to.
-    team: Optional[List[Agent]] = None
+    team: Optional[List['Agent']] = None
     team_data: Optional[Dict[str, Any]] = None
     # --- If this Agent is part of a team ---
     # If this Agent is part of a team, this is the role of the agent in the team
@@ -597,7 +367,7 @@ class Agent:
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
-        reasoning_agent: Optional[Agent] = None,
+        reasoning_agent: Optional['Agent'] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
         read_chat_history: bool = False,
@@ -630,7 +400,7 @@ class Agent:
         save_response_to_file: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
-        team: Optional[List[Agent]] = None,
+        team: Optional[List['Agent']] = None,
         team_data: Optional[Dict[str, Any]] = None,
         role: Optional[str] = None,
         respond_directly: bool = False,
@@ -2861,7 +2631,7 @@ class Agent:
 
         return run_messages
 
-    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> Agent:
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> 'Agent':
         """Create and return a deep copy of this Agent, optionally updating fields.
 
         Args:
@@ -2942,7 +2712,7 @@ class Agent:
             # If copy fails, return as is
             return field_value
 
-    def get_transfer_function(self, member_agent: Agent, index: int) -> Function:
+    def get_transfer_function(self, member_agent: 'Agent', index: int) -> Function:
         def _transfer_task_to_agent(
             task_description: str, expected_output: str, additional_information: Optional[str] = None
         ) -> Iterator[str]:
@@ -3063,7 +2833,6 @@ class Agent:
         self, query: str, num_documents: Optional[int] = None, **kwargs
     ) -> Optional[List[Dict[str, Any]]]:
         """Return a list of references from the knowledge base"""
-        from agno.document import Document
 
         if self.retriever is not None and callable(self.retriever):
             from inspect import signature
@@ -3091,7 +2860,6 @@ class Agent:
         self, query: str, num_documents: Optional[int] = None, **kwargs
     ) -> Optional[List[Dict[str, Any]]]:
         """Get relevant documents from knowledge base asynchronously."""
-        from agno.document import Document
 
         if self.retriever is not None and callable(self.retriever):
             from inspect import signature
@@ -3387,7 +3155,7 @@ class Agent:
         if reasoning_model_provided:
             # Use DeepSeek for reasoning
             if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id.lower() == "deepseek-reasoner":
-                from agno.reasoning.deepseek import get_deepseek_reasoning, get_deepseek_reasoning_agent
+                from agno.reasoning import get_deepseek_reasoning, get_deepseek_reasoning_agent
 
                 ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
@@ -3411,7 +3179,7 @@ class Agent:
                         event=RunEvent.reasoning_completed,
                     )
             elif "deepseek-r1" in reasoning_model.id.lower():
-                from agno.reasoning.openai import get_openai_reasoning, get_openai_reasoning_agent
+                from agno.reasoning import get_openai_reasoning, get_openai_reasoning_agent
 
                 openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
@@ -3446,8 +3214,8 @@ class Agent:
             use_default_reasoning = True
 
         if use_default_reasoning:
-            from agno.reasoning.default import get_default_reasoning_agent
-            from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
+            from agno.reasoning import get_default_reasoning_agent
+            from agno.reasoning import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
@@ -3568,7 +3336,7 @@ class Agent:
         if reasoning_model_provided:
             # Use DeepSeek for reasoning
             if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id == "deepseek-reasoner":
-                from agno.reasoning.deepseek import aget_deepseek_reasoning, get_deepseek_reasoning_agent
+                from agno.reasoning import aget_deepseek_reasoning, get_deepseek_reasoning_agent
 
                 ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
@@ -3593,7 +3361,7 @@ class Agent:
                     )
             elif "deepseek" in reasoning_model.id.lower():
                 # elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o"):
-                from agno.reasoning.openai import aget_openai_reasoning, get_openai_reasoning_agent
+                from agno.reasoning import aget_openai_reasoning, get_openai_reasoning_agent
 
                 openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
@@ -3628,8 +3396,8 @@ class Agent:
             use_default_reasoning = True
 
         if use_default_reasoning:
-            from agno.reasoning.default import get_default_reasoning_agent
-            from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
+            from agno.reasoning import get_default_reasoning_agent
+            from agno.reasoning import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
@@ -3863,9 +3631,6 @@ class Agent:
             str: A string indicating the status of the addition.
         """
         import json
-
-        from agno.document import Document
-
         if self.knowledge is None:
             return "Knowledge base not available"
         document_name = self.name
@@ -4669,3 +4434,220 @@ class Agent:
                 break
 
             self.print_response(message=message, stream=stream, markdown=markdown, **kwargs)
+
+class RunCancelledException(Exception):
+    """Exception raised when a run is cancelled."""
+
+    def __init__(self, message: str = "Operation cancelled by user"):
+        super().__init__(message)
+
+
+class ModelProviderError(Exception):
+    """Exception raised when an internal error occurs."""
+
+    def __init__(
+        self, message: str, status_code: int = 502, model_name: Optional[str] = None, model_id: Optional[str] = None
+    ):
+        self.model_name = model_name
+        self.model_id = model_id
+        self.message = message
+        self.status_code = status_code
+
+    def __str__(self) -> str:
+        return str(self.message)
+
+
+def merge_dictionaries(a: Dict[str, Any], b: Dict[str, Any]) -> None:
+    """
+    Recursively merges two dictionaries.
+    If there are conflicting keys, values from 'b' will take precedence.
+
+    Args:
+        a (Dict[str, Any]): The first dictionary to be merged.
+        b (Dict[str, Any]): The second dictionary, whose values will take precedence.
+
+    Returns:
+        None: The function modifies the first dictionary in place.
+    """
+    for key in b:
+        if key in a and isinstance(a[key], dict) and isinstance(b[key], dict):
+            merge_dictionaries(a[key], b[key])
+        else:
+            a[key] = b[key]
+
+def create_panel(content, title, border_style="blue"):
+    from rich.box import HEAVY
+    from rich.panel import Panel
+
+    return Panel(
+        content, title=title, title_align="left", border_style=border_style, box=HEAVY, expand=True, padding=(1, 1)
+    )
+
+
+def escape_markdown_tags(content: str, tags: Set[str]) -> str:
+    """Escape special tags in markdown content."""
+    escaped_content = content
+    for tag in tags:
+        # Escape opening tag
+        escaped_content = escaped_content.replace(f"<{tag}>", f"&lt;{tag}&gt;")
+        # Escape closing tag
+        escaped_content = escaped_content.replace(f"</{tag}>", f"&lt;/{tag}&gt;")
+    return escaped_content
+
+
+def check_if_run_cancelled(run_response: Union[RunResponse, TeamRunResponse]):
+    if run_response.event == RunEvent.run_cancelled:
+        raise RunCancelledException()
+
+
+def update_run_response_with_reasoning(
+    run_response: Union[RunResponse, TeamRunResponse],
+    reasoning_steps: List[ReasoningStep],
+    reasoning_agent_messages: List[Message],
+) -> None:
+    if run_response.extra_data is None:
+        run_response.extra_data = RunResponseExtraData()
+
+    # Update reasoning_steps
+    if run_response.extra_data.reasoning_steps is None:
+        run_response.extra_data.reasoning_steps = reasoning_steps
+    else:
+        run_response.extra_data.reasoning_steps.extend(reasoning_steps)
+
+    # Update reasoning_messages
+    if run_response.extra_data.reasoning_messages is None:
+        run_response.extra_data.reasoning_messages = reasoning_agent_messages
+    else:
+        run_response.extra_data.reasoning_messages.extend(reasoning_agent_messages)
+
+
+def format_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[str]:
+    """Format tool calls for display in a readable format.
+
+    Args:
+        tool_calls: List of tool call dictionaries containing tool_name and tool_args
+
+    Returns:
+        List[str]: List of formatted tool call strings
+    """
+    formatted_tool_calls = []
+    for tool_call in tool_calls:
+        if "tool_name" in tool_call and "tool_args" in tool_call:
+            tool_name = tool_call["tool_name"]
+            args_str = ""
+            if "tool_args" in tool_call and tool_call["tool_args"] is not None:
+                args_str = ", ".join(f"{k}={v}" for k, v in tool_call["tool_args"].items())
+            formatted_tool_calls.append(f"{tool_name}({args_str})")
+    return formatted_tool_calls
+
+class SafeFormatter(string.Formatter):
+    def get_value(self, key, args, kwargs):
+        """Handle missing keys by returning '{key}'."""
+        if key not in kwargs:
+            return f"{key}"
+        return kwargs[key]
+
+    def format_field(self, value, format_spec):
+        """
+        If Python sees something like 'somekey:"stuff"', it tries to parse
+        it as a format spec and might raise ValueError. We catch it here
+        and just return the literal placeholder.
+        """
+        if not format_spec:
+            return super().format_field(value, format_spec)
+
+        try:
+            return super().format_field(value, format_spec)
+        except ValueError:
+            # On invalid format specifiers, keep them literal
+            return f"{{{value}:{format_spec}}}"
+
+def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
+    structured_output = None
+    try:
+        # First attempt: direct JSON validation
+        structured_output = response_model.model_validate_json(content)
+    except (ValidationError, json.JSONDecodeError):
+        # Second attempt: Extract JSON from markdown code blocks and clean
+        content = content
+
+        # Handle code blocks
+        if "```json" in content:
+            content = content.split("```json")[-1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].strip()
+
+        # Clean the JSON string
+        # Remove markdown formatting
+        content = re.sub(r"[*_`#]", "", content)
+
+        # Handle newlines and control characters
+        content = content.replace("\n", " ").replace("\r", "")
+        content = re.sub(r"[\x00-\x1F\x7F]", "", content)
+
+        # Escape quotes only in values, not keys
+        def escape_quotes_in_values(match):
+            key = match.group(1)
+            value = match.group(2)
+            # Escape quotes in the value portion only
+            escaped_value = value.replace('"', '\\"')
+            return f'"{key}": "{escaped_value}'
+
+        # Find and escape quotes in field values
+        content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
+
+        try:
+            # Try parsing the cleaned JSON
+            structured_output = response_model.model_validate_json(content)
+        except (ValidationError, json.JSONDecodeError) as e:
+            print(f"Failed to parse cleaned JSON: {e}")
+
+            try:
+                # Final attempt: Try parsing as Python dict
+                data = json.loads(content)
+                structured_output = response_model.model_validate(data)
+            except (ValidationError, json.JSONDecodeError) as e:
+                print(f"Failed to parse as Python dict: {e}")
+
+    return structured_output
+
+
+def get_text_from_message(message: Union[List, Dict, str, Message]) -> str:
+    """Return the user texts from the message"""
+
+    if isinstance(message, str):
+        return message
+    if isinstance(message, list):
+        text_messages = []
+        if len(message) == 0:
+            return ""
+
+        if "type" in message[0]:
+            for m in message:
+                m_type = m.get("type")
+                if m_type is not None and isinstance(m_type, str):
+                    m_value = m.get(m_type)
+                    if m_value is not None and isinstance(m_value, str):
+                        if m_type == "text":
+                            text_messages.append(m_value)
+                        # if m_type == "image_url":
+                        #     text_messages.append(f"Image: {m_value}")
+                        # else:
+                        #     text_messages.append(f"{m_type}: {m_value}")
+        elif "role" in message[0]:
+            for m in message:
+                m_role = m.get("role")
+                if m_role is not None and isinstance(m_role, str):
+                    m_content = m.get("content")
+                    if m_content is not None and isinstance(m_content, str):
+                        if m_role == "user":
+                            text_messages.append(m_content)
+        if len(text_messages) > 0:
+            return "\n".join(text_messages)
+    if isinstance(message, dict):
+        if "content" in message:
+            return get_text_from_message(message["content"])
+    if isinstance(message, Message) and message.content is not None:
+        return get_text_from_message(message.content)
+    return ""
+

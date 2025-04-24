@@ -12,10 +12,10 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
-from agno.memory.workflow import WorkflowMemory, WorkflowRun
+from agno.memory import WorkflowMemory, WorkflowRun
 from agno.run import RunEvent, RunResponse  # noqa: F401
-from agno.storage.base import Storage
-from agno.storage.session.workflow import WorkflowSession
+from agno.storage import Storage
+from agno.storage import WorkflowSession
 from typing import Any, Dict
 
 

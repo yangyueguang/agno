@@ -26,17 +26,16 @@ from pydantic import BaseModel
 
 from agno.agent import *
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
-from agno.memory.memory import Memory
-from agno.memory.team import TeamMemory, TeamRun
+from agno.memory import Memory, TeamMemory, TeamRun
 from agno.models.base import Model
 from agno.models.message import Citations, Message
 from agno.models.response import ModelResponse, ModelResponseEvent
-from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
+from agno.reasoning import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunMessages
 from agno.run import RunEvent, RunResponse
 from agno.run import TeamRunResponse
-from agno.storage.base import Storage
-from agno.storage.session.team import TeamSession
+from agno.storage import Storage
+from agno.storage import TeamSession
 from agno.tools import Function
 from agno.tools import Toolkit
 from agno.models.base import Timer
@@ -3357,7 +3356,7 @@ class Team:
                 self.reasoning_model.__class__.__name__ == "DeepSeek"
                 and self.reasoning_model.id.lower() == "deepseek-reasoner"
             ):
-                from agno.reasoning.deepseek import get_deepseek_reasoning
+                from agno.reasoning import get_deepseek_reasoning
 
                 reasoning_agent = self._get_reasoning_agent(self.reasoning_model)
 
@@ -3369,7 +3368,7 @@ class Team:
                     return
             # Use OpenAI o3 for reasoning
             elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3"):
-                from agno.reasoning.openai import get_openai_reasoning
+                from agno.reasoning import get_openai_reasoning
 
                 reasoning_agent = self._get_reasoning_agent(self.reasoning_model)
 
@@ -3391,8 +3390,8 @@ class Team:
                     reasoning_agent_messages=[reasoning_message],
                 )
         else:
-            from agno.reasoning.default import get_default_reasoning_agent
-            from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
+            from agno.reasoning import get_default_reasoning_agent
+            from agno.reasoning import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
             use_json_mode: bool = self.use_json_mode
@@ -3503,7 +3502,7 @@ class Team:
                 self.reasoning_model.__class__.__name__ == "DeepSeek"
                 and self.reasoning_model.id.lower() == "deepseek-reasoner"
             ):
-                from agno.reasoning.deepseek import aget_deepseek_reasoning
+                from agno.reasoning import aget_deepseek_reasoning
 
                 reasoning_agent = self._get_reasoning_agent(self.reasoning_model)
 
@@ -3514,7 +3513,7 @@ class Team:
                     print("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
             elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3"):
-                from agno.reasoning.openai import aget_openai_reasoning
+                from agno.reasoning import aget_openai_reasoning
 
                 reasoning_agent = self._get_reasoning_agent(self.reasoning_model)
 
@@ -3536,8 +3535,8 @@ class Team:
                     reasoning_agent_messages=[reasoning_message],
                 )
         else:
-            from agno.reasoning.default import get_default_reasoning_agent
-            from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
+            from agno.reasoning import get_default_reasoning_agent
+            from agno.reasoning import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
             use_json_mode: bool = self.use_json_mode

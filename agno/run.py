@@ -47,7 +47,7 @@ from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message, MessageReferences
-from agno.reasoning.step import ReasoningStep
+from agno.reasoning import ReasoningStep
 
 
 class RunEvent(str, Enum):

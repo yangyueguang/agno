@@ -22,7 +22,7 @@
 import json
 from textwrap import dedent
 from typing import Dict, Iterator, Optional
-from agno.storage.sqlite import SqliteStorage
+from agno.storage import SqliteStorage
 from agno.tools import DuckDuckGoTools
 from agno.tools import NewspaperTools
 

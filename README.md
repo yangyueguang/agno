@@ -66,9 +66,9 @@ agent.print_response("Tell me about a breaking news story from New York.", strea
 ```python
 from agno.agent import Agent
 from agno.models.ollama import Ollama
-from agno.embedder.ollama import OllamaEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.vectordb.lancedb import LanceDb, SearchType
+from agno.embedder import OllamaEmbedder
+from agno.knowledge import PDFUrlKnowledgeBase
+from agno.vectordb import SearchType
 
 agent = Agent(
     model=Ollama(),
@@ -79,13 +79,7 @@ agent = Agent(
         "Prefer the information in your knowledge base over the web results."
     ],
     knowledge=PDFUrlKnowledgeBase(
-        urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
-        vector_db=LanceDb(
-            uri="tmp/lancedb",
-            table_name="recipes",
-            search_type=SearchType.hybrid,
-            embedder=OllamaEmbedder(),
-        ),
+        urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"]
     ),
     tools=[lambda x: 'hello'],
     show_tool_calls=True,
