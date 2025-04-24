@@ -1,7 +1,11 @@
-from dataclasses import dataclass, field
-from typing import List, Optional
-
-from agno.models.message import Message
+from dataclasses import asdict, dataclass, field
+from enum import Enum
+from time import time
+from typing import Any, Dict, List, Optional, Union
+from pydantic import BaseModel
+from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
+from agno.models import Citations, Message, MessageReferences
+from agno.models import Message
 
 
 @dataclass
@@ -30,24 +34,6 @@ class RunMessages:
         if self.extra_messages is not None:
             input_messages.extend(self.extra_messages)
         return input_messages
-from dataclasses import asdict, dataclass, field
-from time import time
-from typing import Any, Dict, List, Optional, Union
-
-from pydantic import BaseModel
-
-from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
-from agno.models.message import Citations, Message
-from dataclasses import asdict, dataclass, field
-from enum import Enum
-from time import time
-from typing import Any, Dict, List, Optional
-
-from pydantic import BaseModel
-
-from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
-from agno.models.message import Citations, Message, MessageReferences
-from agno.reasoning import ReasoningStep
 
 
 class RunEvent(str, Enum):
@@ -70,9 +56,10 @@ class RunEvent(str, Enum):
 
 @dataclass
 class RunResponseExtraData:
+    from agno.reasoning import ReasoningStep
     references: Optional[List[MessageReferences]] = None
     add_messages: Optional[List[Message]] = None
-    reasoning_steps: Optional[List[ReasoningStep]] = None
+    reasoning_steps: Optional[List['ReasoningStep']] = None
     reasoning_messages: Optional[List[Message]] = None
 
     def to_dict(self) -> Dict[str, Any]:

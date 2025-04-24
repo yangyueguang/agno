@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from typing import Iterator  # noqa
 from pydantic import BaseModel
 from agno.agent import Agent
-from agno.models.ollama import Ollama
+from agno.ollama import Ollama
 from agno.team import Team
 from agno.tools import YFinanceTools
 
@@ -42,7 +42,7 @@ from pydantic import BaseModel
 
 from agno.run import RunResponse
 
-from agno.models.base import Timer
+from agno.models import Timer
 
 
 def pprint_run_response(

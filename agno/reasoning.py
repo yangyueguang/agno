@@ -1,10 +1,10 @@
 from enum import Enum
 from pydantic import BaseModel, Field
-from agno.models.message import Message
+from agno.models import Message
 from agno.run import RunMessages
 from textwrap import dedent
 from typing import Callable, Dict, List, Optional, Union
-from agno.models.base import Model
+from agno.models import Model
 from agno.tools import Function
 from agno.tools import Toolkit
 

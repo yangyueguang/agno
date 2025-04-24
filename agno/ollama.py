@@ -1,17 +1,18 @@
 from dataclasses import dataclass, field
 from textwrap import dedent
-from agno.models.message import Message, MessageMetrics
+from agno.models import Message, MessageMetrics
 from agno.tools import FunctionCall
-from agno.models.base import Timer
+from agno.models import Timer
 import json
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Union, AsyncIterator
 from pydantic import BaseModel
-from agno.models.base import Model
-from agno.models.message import Message
-from agno.models.response import ModelResponse
+from agno.models import Model
+from agno.models import Message
+from agno.models import ModelResponse
 from ollama import AsyncClient as AsyncOllamaClient
 from ollama import Client as OllamaClient
 from ollama._types import ChatResponse, Message as OllamaMessage
+
 
 def extract_tool_call_from_string(text: str, start_tag: str = "<tool_call>", end_tag: str = "</tool_call>"):
     start_index = text.find(start_tag) + len(start_tag)

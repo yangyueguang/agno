@@ -1,8 +1,5 @@
 import asyncio
-import json
-from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass, replace
-from os import getenv
 from typing import (
     Any,
     AsyncIterator,
@@ -20,16 +17,12 @@ from typing import (
     cast,
     overload,
 )
-from uuid import uuid4
-
-from pydantic import BaseModel
-
 from agno.agent import *
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory import Memory, TeamMemory, TeamRun
-from agno.models.base import Model
-from agno.models.message import Citations, Message
-from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models import Model
+from agno.models import Citations, Message
+from agno.models import ModelResponse, ModelResponseEvent
 from agno.reasoning import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunMessages
 from agno.run import RunEvent, RunResponse
@@ -38,15 +31,12 @@ from agno.storage import Storage
 from agno.storage import TeamSession
 from agno.tools import Function
 from agno.tools import Toolkit
-from agno.models.base import Timer
+from agno.models import Timer
 from functools import partial
 from docstring_parser import parse
+from agno.models import Message
 from typing import Dict, List, Union
 
-from agno.models.message import Message
-from typing import Dict, List, Union
-
-from agno.models.message import Message
 
 
 def get_text_from_message(message: Union[List, Dict, str, Message]) -> str:
@@ -3712,7 +3702,7 @@ class Team:
         # Set the default model
         if self.model is None:
             try:
-                from agno.models.ollama import Ollama
+                from agno.ollama import Ollama
             except ModuleNotFoundError as e:
                 print(e)
                 print(

@@ -25,14 +25,14 @@ import json
 from pydantic import BaseModel, ValidationError
 from uuid import uuid4
 from pydantic import BaseModel
-from agno.models.base import Timer
+from agno.memory import AgentMemory, AgentRun
+from agno.models import Timer
 from agno.knowledge import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
-from agno.memory import AgentMemory, AgentRun
-from agno.models.base import Model
+from agno.models import Model
 from agno.reader import Document
-from agno.models.message import Citations, Message, MessageReferences
-from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models import Citations, Message, MessageReferences
+from agno.models import ModelResponse, ModelResponseEvent
 from agno.reasoning import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunMessages
 from agno.storage import Storage
@@ -41,14 +41,14 @@ from agno.tools import Function
 from agno.tools import Toolkit
 import string
 from typing import Any, Dict, List, Set, Union
-from agno.models.message import Message
+from agno.models import Message
 from agno.reasoning import ReasoningStep
 from agno.run import RunEvent, RunResponse, RunResponseExtraData
 from agno.run import TeamRunResponse
 from typing import Any, Dict
 from dataclasses import dataclass
 from typing import Optional, Union
-from agno.models.message import MessageMetrics
+from agno.models import MessageMetrics
 from typing import Optional
 
 
@@ -1744,7 +1744,7 @@ class Agent:
         # Use the default Model (OpenAIChat) if no model is provided
         if self.model is None:
             try:
-                from agno.models.ollama import Ollama
+                from agno.ollama import Ollama
             except ModuleNotFoundError as e:
                 print(e)
                 print(

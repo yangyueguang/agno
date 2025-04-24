@@ -26,7 +26,7 @@ export OPENAI_API_KEY=sk-xxxx
 ```
 ```python websearch_agent.py
 from agno.agent import Agent
-from agno.models.ollama import Ollama
+from agno.ollama import Ollama
 
 agent = Agent(
     model=Ollama(),
@@ -39,7 +39,7 @@ agent.print_response("What's happening in New York?", stream=True)
 
 ```python
 from agno.agent import Agent
-from agno.models.ollama import Ollama
+from agno.ollama import Ollama
 
 agent = Agent(
     model=Ollama(),
@@ -51,7 +51,7 @@ agent.print_response("Tell me about a breaking news story from New York.", strea
 
 ```python
 from agno.agent import Agent
-from agno.models.ollama import Ollama
+from agno.ollama import Ollama
 
 agent = Agent(
     model=Ollama(),
@@ -65,7 +65,7 @@ agent.print_response("Tell me about a breaking news story from New York.", strea
 
 ```python
 from agno.agent import Agent
-from agno.models.ollama import Ollama
+from agno.ollama import Ollama
 from agno.embedder import OllamaEmbedder
 from agno.knowledge import PDFUrlKnowledgeBase
 from agno.vectordb import SearchType
@@ -96,7 +96,7 @@ agent.print_response("What is the history of Thai curry?", stream=True)
 
 ```python
 from agno.agent import Agent
-from agno.models.ollama import Ollama
+from agno.ollama import Ollama
 from agno.team import Team
 
 web_agent = Agent(

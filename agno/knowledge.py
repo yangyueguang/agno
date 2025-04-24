@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional
 import asyncio
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from agno.chunking import FixedSizeChunking, ChunkingStrategy
+from agno.reader import FixedSizeChunking, ChunkingStrategy
 from agno.vectordb import VectorDb
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import NodeWithScore

@@ -9,10 +9,10 @@ from pydantic import BaseModel, ConfigDict, model_validator, Field, ValidationEr
 from enum import Enum
 from agno.tools import Function
 from typing import Any, List, Optional, cast
-from agno.models.base import Model
+from agno.models import Model
 from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, ConfigDict
-from agno.models.message import Message
+from agno.models import Message
 from agno.run import RunResponse
 from pathlib import Path
 from sqlalchemy import (
@@ -306,7 +306,7 @@ class MemoryManager(BaseModel):
         # Use the default Model (OpenAIChat) if no model is provided
         if self.model is None:
             try:
-                from agno.models.ollama import Ollama
+                from agno.ollama import Ollama
             except ModuleNotFoundError as e:
                 print(e)
                 print(
@@ -524,7 +524,7 @@ class MemoryClassifier(BaseModel):
     def update_model(self) -> None:
         if self.model is None:
             try:
-                from agno.models.ollama import Ollama
+                from agno.ollama import Ollama
             except ModuleNotFoundError as e:
                 print(e)
                 print(
@@ -632,7 +632,7 @@ class MemorySummarizer(BaseModel):
     def update_model(self) -> None:
         if self.model is None:
             try:
-                from agno.models.ollama import Ollama
+                from agno.ollama import Ollama
             except ModuleNotFoundError as e:
                 print(e)
                 print(
