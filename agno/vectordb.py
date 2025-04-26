@@ -1,6 +1,5 @@
 from hashlib import md5
-from chromadb import Client as ChromaDbClient
-from chromadb import PersistentClient as PersistentChromaDbClient
+from chromadb import Client as ChromaDbClient, PersistentClient as PersistentChromaDbClient
 from chromadb.api.client import ClientAPI
 from chromadb.api.models.Collection import Collection
 from chromadb.api.types import GetResult, IncludeEnum, QueryResult
@@ -9,64 +8,70 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from agno.reader import Document, Embedder, OllamaEmbedder
 
+
 class SearchType(str, Enum):
     vector = "vector"
     keyword = "keyword"
     hybrid = "hybrid"
+
 
 class Distance(str, Enum):
     cosine = "cosine"
     l2 = "l2"
     max_inner_product = "max_inner_product"
 
-class VectorDb(ABC):
-    """Base class for Vector Databases"""
-    @abstractmethod
 
+class VectorDb(ABC):
+    @abstractmethod
     def create(self) -> None:
         raise NotImplementedError
+
     @abstractmethod
     async def async_create(self) -> None:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def doc_exists(self, document: Document) -> bool:
         raise NotImplementedError
+
     @abstractmethod
     async def async_doc_exists(self, document: Document) -> bool:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def name_exists(self, name: str) -> bool:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError
 
     def id_exists(self, id: str) -> bool:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         raise NotImplementedError
+
     @abstractmethod
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         raise NotImplementedError
 
     def upsert_available(self) -> bool:
         return False
-    @abstractmethod
 
+    @abstractmethod
     def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         raise NotImplementedError
+
     @abstractmethod
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         raise NotImplementedError
+
     @abstractmethod
     async def async_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         raise NotImplementedError
@@ -79,27 +84,30 @@ class VectorDb(ABC):
 
     def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def drop(self) -> None:
         raise NotImplementedError
+
     @abstractmethod
     async def async_drop(self) -> None:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def exists(self) -> bool:
         raise NotImplementedError
+
     @abstractmethod
     async def async_exists(self) -> bool:
         raise NotImplementedError
 
     def optimize(self) -> None:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def delete(self) -> bool:
         raise NotImplementedError
+
 
 class ChromaDb(VectorDb):
     def __init__(self,
@@ -110,26 +118,19 @@ class ChromaDb(VectorDb):
         persistent_client: bool = False,
         reranker = None,
         **kwargs):
-        # Collection attributes
         self.collection_name: str = collection
-        # Embedder for embedding the document contents
         if embedder is None:
             embedder = OllamaEmbedder()
         self.embedder: Embedder = embedder
-        # Distance metric
         self.distance: Distance = distance
-        # Chroma client instance
         self._client: Optional[ClientAPI] = None
-        # Chroma collection instance
         self._collection: Optional[Collection] = None
-        # Persistent Chroma client instance
         self.persistent_client: bool = persistent_client
         self.path: str = path
         self.reranker = reranker
-        # Chroma client kwargs
         self.kwargs = kwargs
-    @property
 
+    @property
     def client(self) -> ClientAPI:
         if self._client is None:
             if not self.persistent_client:
@@ -142,7 +143,6 @@ class ChromaDb(VectorDb):
         return self._client
 
     def create(self) -> None:
-        """Create the collection in ChromaDb."""
         if self.exists():
             print(f"Collection already exists: {self.collection_name}")
             self._collection = self.client.get_collection(name=self.collection_name)
@@ -151,12 +151,6 @@ class ChromaDb(VectorDb):
             self._collection = self.client.create_collection(name=self.collection_name, metadata={"hnsw:space": self.distance.value})
 
     def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the collection.
-        Args:
-            document (Document): Document to check.
-        Returns:
-            bool: True if document exists, False otherwise.
-        """
         if not self.client:
             print("Client not initialized")
             return False
@@ -172,11 +166,6 @@ class ChromaDb(VectorDb):
         return False
 
     def name_exists(self, name: str) -> bool:
-        """Check if a document with a given name exists in the collection.
-        Args:
-            name (str): Name of the document to check.
-        Returns:
-            bool: True if document exists, False otherwise."""
         if self.client:
             try:
                 collections: Collection = self.client.get_collection(name=self.collection_name)
@@ -188,11 +177,6 @@ class ChromaDb(VectorDb):
         return False
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Insert documents into the collection.
-        Args:
-            documents (List[Document]): List of documents to insert
-            filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
-        """
         print(f"Inserting {len(documents)} documents")
         ids: List = []
         docs: List = []
@@ -217,15 +201,9 @@ class ChromaDb(VectorDb):
                 print(f"Committed {len(docs)} documents")
 
     def upsert_available(self) -> bool:
-        """Check if upsert is available in ChromaDB."""
         return True
 
     def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Upsert documents into the collection.
-        Args:
-            documents (List[Document]): List of documents to upsert
-            filters (Optional[Dict[str, Any]]): Filters to apply while upserting
-        """
         print(f"Upserting {len(documents)} documents")
         ids: List = []
         docs: List = []
@@ -250,14 +228,6 @@ class ChromaDb(VectorDb):
                 print(f"Committed {len(docs)} documents")
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
-        """Search the collection for a query.
-        Args:
-            query (str): Query to search for.
-            limit (int): Number of results to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply while searching.
-        Returns:
-            List[Document]: List of search results.
-        """
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             print(f"Error getting embedding for Query: {query}")
@@ -267,7 +237,6 @@ class ChromaDb(VectorDb):
         result: QueryResult = self._collection.query(query_embeddings=query_embedding,
             n_results=limit,
             include=["metadatas", "documents", "embeddings", "distances", "uris"])
-        # Build search results
         search_results: List[Document] = []
         ids = result.get("ids", [[]])[0]
         metadata = result.get("metadatas", [{}])[0]
@@ -278,7 +247,6 @@ class ChromaDb(VectorDb):
         for idx, distance in enumerate(distances):
             metadata[idx]["distances"] = distance
         try:
-            # Use zip to iterate over multiple lists simultaneously
             for idx, (id_, metadata, document) in enumerate(zip(ids, metadata, documents)):
                 search_results.append(Document(id=id_,
                         meta_data=metadata,
@@ -291,13 +259,11 @@ class ChromaDb(VectorDb):
         return search_results
 
     def drop(self) -> None:
-        """Delete the collection."""
         if self.exists():
             print(f"Deleting collection: {self.collection_name}")
             self.client.delete_collection(name=self.collection_name)
 
     def exists(self) -> bool:
-        """Check if the collection exists."""
         try:
             self.client.get_collection(name=self.collection_name)
             return True
@@ -306,7 +272,6 @@ class ChromaDb(VectorDb):
         return False
 
     def get_count(self) -> int:
-        """Get the count of documents in the collection."""
         if self.exists():
             try:
                 collection: Collection = self.client.get_collection(name=self.collection_name)
@@ -325,19 +290,27 @@ class ChromaDb(VectorDb):
         except Exception as e:
             print(f"Error clearing collection: {e}")
             return False
+
     async def async_create(self) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
     async def async_doc_exists(self, document: Document) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
     async def async_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
     async def async_drop(self) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
     async def async_exists(self) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
     async def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

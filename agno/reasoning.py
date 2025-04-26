@@ -1,18 +1,18 @@
 from enum import Enum
 from pydantic import BaseModel, Field
-from agno.models import Message
-from agno.run import RunMessages
 from textwrap import dedent
 from typing import Callable, Dict, List, Optional, Union
-from agno.models import Model
-from agno.tools import Function
-from agno.tools import Toolkit
+from agno.models import Model, Message
+from agno.tools import Function, Toolkit
+from agno.run import RunMessages
+
 
 class NextAction(str, Enum):
     CONTINUE = "continue"
     VALIDATE = "validate"
     FINAL_ANSWER = "final_answer"
     RESET = "reset"
+
 
 class ReasoningStep(BaseModel):
     title: Optional[str] = Field(None, description="A concise title summarizing the step's purpose")
@@ -23,8 +23,10 @@ class ReasoningStep(BaseModel):
         description="Indicates whether to continue reasoning, validate the provided result, or confirm that the result is the final answer")
     confidence: Optional[float] = Field(None, description="Confidence score for this step (0.0 to 1.0)")
 
+
 class ReasoningSteps(BaseModel):
     reasoning_steps: List[ReasoningStep] = Field(..., description="A list of reasoning steps")
+
 
 def get_next_action(reasoning_step: ReasoningStep) -> NextAction:
     next_action = reasoning_step.next_action or NextAction.FINAL_ANSWER
@@ -35,6 +37,7 @@ def get_next_action(reasoning_step: ReasoningStep) -> NextAction:
             print(f"Reasoning error. Invalid next action: {next_action}")
             return NextAction.FINAL_ANSWER
     return next_action
+
 
 def update_messages_with_reasoning(run_messages: RunMessages,
     reasoning_messages: List[Message]) -> None:
@@ -48,6 +51,7 @@ def update_messages_with_reasoning(run_messages: RunMessages,
             content="Now I will summarize my reasoning and provide a final answer. I will skip any tool calls already executed and steps that are not relevant to the final answer.",
             add_to_agent_memory=False))
 
+
 def get_default_reasoning_agent(reasoning_model: Model,
     min_steps: int,
     max_steps: int,
@@ -55,12 +59,11 @@ def get_default_reasoning_agent(reasoning_model: Model,
     use_json_mode: bool = False,
     monitoring: bool = False,
     telemetry: bool = True,
-
     debug_mode: bool = False) -> Optional["Agent"]:
     from agno.agent import Agent
     agent = Agent(model=reasoning_model,
         description="You are a meticulous, thoughtful, and logical Reasoning Agent who solves complex problems through clear, structured, step-by-step analysis.",
-        instructions=dedent(f"""\
+        instructions=dedent(f"""
         Step 1 - Problem Analysis:
         - Restate the user's task clearly in your own words to ensure full comprehension.
         - Identify explicitly what information is required and what tools or resources might be necessary.
@@ -105,7 +108,7 @@ def get_default_reasoning_agent(reasoning_model: Model,
             - **Insightful**: Offer innovative and unique perspectives where applicable.
         - Always explicitly handle errors and mistakes by resetting or revising steps immediately.
         - Adhere strictly to a minimum of {min_steps} and maximum of {max_steps} steps to ensure effective task resolution.
-        - Execute necessary tools proactively and without hesitation, clearly documenting tool usage.\
+        - Execute necessary tools proactively and without hesitation, clearly documenting tool usage.
         """),
         tools=tools,
         show_tool_calls=False,
@@ -117,9 +120,11 @@ def get_default_reasoning_agent(reasoning_model: Model,
     agent.model.show_tool_calls = False
     return agent
 
+
 def get_openai_reasoning_agent(reasoning_model: Model, **kwargs) -> "Agent":
     from agno.agent import Agent
     return Agent(model=reasoning_model, **kwargs)
+
 
 def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:
     from agno.run import RunResponse
@@ -130,7 +135,6 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
         return None
     reasoning_content: str = ""
     if reasoning_agent_response.content is not None:
-        # Extract content between <think> tags if present
         content = reasoning_agent_response.content
         if "<think>" in content and "</think>" in content:
             start_idx = content.find("<think>") + len("<think>")
@@ -140,9 +144,9 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
             reasoning_content = content
     return Message(role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content)
 
+
 async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:
     from agno.run import RunResponse
-    # Update system message role to "system"
     for message in messages:
         if message.role == "developer":
             message.role = "system"
@@ -153,7 +157,6 @@ async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message
         return None
     reasoning_content: str = ""
     if reasoning_agent_response.content is not None:
-        # Extract content between <think> tags if present
         content = reasoning_agent_response.content
         if "<think>" in content and "</think>" in content:
             start_idx = content.find("<think>") + len("<think>")
@@ -163,13 +166,14 @@ async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message
             reasoning_content = content
     return Message(role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content)
 
+
 def get_deepseek_reasoning_agent(reasoning_model: Model, monitoring: bool = False) -> "Agent":
     from agno.agent import Agent
     return Agent(model=reasoning_model, monitoring=monitoring)
 
+
 def get_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:
     from agno.run import RunResponse
-    # Update system message role to "system"
     for message in messages:
         if message.role == "developer":
             message.role = "system"
@@ -186,9 +190,9 @@ def get_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Message]) ->
                 break
     return Message(role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content)
 
+
 async def aget_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:
     from agno.run import RunResponse
-    # Update system message role to "system"
     for message in messages:
         if message.role == "developer":
             message.role = "system"

@@ -1,32 +1,23 @@
 import random
 import time
-from typing import Dict, List, Set, Tuple
-from urllib.parse import urljoin, urlparse
-from bs4 import BeautifulSoup, Tag  # noqa: F401
-from pypdf import PdfReader as DocumentReader  # noqa: F401
-from pypdf.errors import PdfStreamError
-from docx import Document as DocxDocument
 import csv
 import io
 import os
-from pathlib import Path
-from typing import IO, Any, List, Union
-from urllib.parse import urlparse
 import httpx
-from time import sleep
 import aiofiles
 import asyncio
+from pathlib import Path
+from urllib.parse import urljoin, urlparse
+from bs4 import BeautifulSoup, Tag
+from pypdf import PdfReader as DocumentReader
+from pypdf.errors import PdfStreamError
+from docx import Document as DocxDocument
+from urllib.parse import urlparse
 from dataclasses import dataclass, field
-from typing import Any, List
 from abc import ABC, abstractmethod
 from chonkie import SemanticChunker
-import warnings
-from typing import List, Optional
-from agno.models import Model
-from agno.models import Message
-from typing import Any, Dict, List, Optional, Tuple
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, IO, Union, Set
+from agno.models import Model, Message
 
 
 @dataclass
@@ -47,11 +38,6 @@ try:
 
     ollama_version = metadata.version("ollama")
     parsed_version = version.parse(ollama_version)
-    if parsed_version.major == 0 and parsed_version.minor < 3:
-        import warnings
-
-        warnings.warn("Only Ollama v0.3.x and above are supported", UserWarning)
-        raise RuntimeError("Incompatible Ollama version detected")
 except ImportError as e:
     if "ollama" in str(e):
         raise ImportError("Ollama not installed. Install with `pip install ollama`") from e
@@ -118,7 +104,6 @@ class OllamaEmbedder(Embedder):
 
 @dataclass
 class Document:
-    """Dataclass for managing a document"""
     content: str
     id: Optional[str] = None
     name: Optional[str] = None
@@ -129,59 +114,47 @@ class Document:
     reranking_score: Optional[float] = None
 
     def embed(self, embedder: Optional[Embedder] = None) -> None:
-        """Embed the document using the provided embedder"""
         _embedder = embedder or self.embedder
         if _embedder is None:
             raise ValueError("No embedder provided")
         self.embedding, self.usage = _embedder.get_embedding_and_usage(self.content)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Returns a dictionary representation of the document"""
         fields = {"name", "meta_data", "content"}
         return {
             field: getattr(self, field)
             for field in fields
-            if getattr(self, field) is not None or field == "content"  # content is always included
+            if getattr(self, field) is not None or field == "content"
         }
-    @classmethod
 
+    @classmethod
     def from_dict(cls, document: Dict[str, Any]) -> "Document":
-        """Returns a Document object from a dictionary representation"""
         return cls(**document)
-    @classmethod
 
+    @classmethod
     def from_json(cls, document: str) -> "Document":
         """Returns a Document object from a json string representation"""
         import json
         return cls(**json.loads(document))
 
-class ChunkingStrategy(ABC):
-    """Base class for chunking strategies"""
-    @abstractmethod
 
+class ChunkingStrategy(ABC):
+    @abstractmethod
     def chunk(self, document: Document) -> List[Document]:
         raise NotImplementedError
 
     def clean_text(self, text: str) -> str:
-        """Clean the text by replacing multiple newlines with a single newline"""
         import re
-        # Replace multiple newlines with a single newline
         cleaned_text = re.sub(r"\n+", "\n", text)
-        # Replace multiple spaces with a single space
         cleaned_text = re.sub(r"\s+", " ", cleaned_text)
-        # Replace multiple tabs with a single tab
         cleaned_text = re.sub(r"\t+", "\t", cleaned_text)
-        # Replace multiple carriage returns with a single carriage return
         cleaned_text = re.sub(r"\r+", "\r", cleaned_text)
-        # Replace multiple form feeds with a single form feed
         cleaned_text = re.sub(r"\f+", "\f", cleaned_text)
-        # Replace multiple vertical tabs with a single vertical tab
         cleaned_text = re.sub(r"\v+", "\v", cleaned_text)
         return cleaned_text
 
-class AgenticChunking(ChunkingStrategy):
-    """Chunking strategy that uses an LLM to determine natural breakpoints in the text"""
 
+class AgenticChunking(ChunkingStrategy):
     def __init__(self, model: Optional[Model] = None, max_chunk_size: int = 5000):
         if model is None:
             try:
@@ -193,7 +166,6 @@ class AgenticChunking(ChunkingStrategy):
         self.model = model
 
     def chunk(self, document: Document) -> List[Document]:
-        """Split text into chunks using LLM to determine natural breakpoints based on context"""
         if len(document.content) <= self.max_chunk_size:
             return [document]
         chunks: List[Document] = []
@@ -201,7 +173,6 @@ class AgenticChunking(ChunkingStrategy):
         chunk_meta_data = document.meta_data
         chunk_number = 1
         while remaining_text:
-            # Ask model to find a good breakpoint within max_chunk_size
             prompt = f"""Analyze this text and determine a natural breakpoint within the first {self.max_chunk_size} characters.
             Consider semantic completeness, paragraph boundaries, and topic transitions.
             Return only the character position number of where to break the text:
@@ -213,9 +184,7 @@ class AgenticChunking(ChunkingStrategy):
                 else:
                     break_point = self.max_chunk_size
             except Exception:
-                # Fallback to max size if model fails
                 break_point = self.max_chunk_size
-            # Extract chunk and update remaining text
             chunk = remaining_text[:break_point].strip()
             meta_data = chunk_meta_data.copy()
             meta_data["chunk"] = chunk_number
@@ -235,9 +204,8 @@ class AgenticChunking(ChunkingStrategy):
                 break
         return chunks
 
-class DocumentChunking(ChunkingStrategy):
-    """A chunking strategy that splits text based on document structure like paragraphs and sections"""
 
+class DocumentChunking(ChunkingStrategy):
     def __init__(self, chunk_size: int = 5000, overlap: int = 0):
         self.chunk_size = chunk_size
         self.overlap = overlap
@@ -246,7 +214,6 @@ class DocumentChunking(ChunkingStrategy):
         """Split document into chunks based on document structure"""
         if len(document.content) <= self.chunk_size:
             return [document]
-        # Split on double newlines first (paragraphs)
         paragraphs = self.clean_text(document.content).split("\n\n")
         chunks: List[Document] = []
         current_chunk = []
@@ -282,12 +249,10 @@ class DocumentChunking(ChunkingStrategy):
                 chunk_id = f"{document.name}_{chunk_number}"
             meta_data["chunk_size"] = len("\n\n".join(current_chunk))
             chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk)))
-        # Handle overlap if specified
         if self.overlap > 0:
             overlapped_chunks = []
             for i in range(len(chunks)):
                 if i > 0:
-                    # Add overlap from previous chunk
                     prev_text = chunks[i - 1].content[-self.overlap :]
                     meta_data = chunk_meta_data.copy()
                     meta_data["chunk"] = chunk_number
@@ -305,18 +270,15 @@ class DocumentChunking(ChunkingStrategy):
             chunks = overlapped_chunks
         return chunks
 
-class FixedSizeChunking(ChunkingStrategy):
-    """Chunking strategy that splits text into fixed-size chunks with optional overlap"""
 
+class FixedSizeChunking(ChunkingStrategy):
     def __init__(self, chunk_size: int = 5000, overlap: int = 0):
-        # overlap must be less than chunk size
         if overlap >= chunk_size:
             raise ValueError(f"Invalid parameters: overlap ({overlap}) must be less than chunk size ({chunk_size}).")
         self.chunk_size = chunk_size
         self.overlap = overlap
 
     def chunk(self, document: Document) -> List[Document]:
-        """Split document into fixed-size chunks with optional overlap"""
         content = self.clean_text(document.content)
         content_length = len(content)
         chunked_documents: List[Document] = []
@@ -325,11 +287,9 @@ class FixedSizeChunking(ChunkingStrategy):
         start = 0
         while start + self.overlap < content_length:
             end = min(start + self.chunk_size, content_length)
-            # Ensure we're not splitting a word in half
             if end < content_length:
                 while end > start and content[end] not in [" ", "\n", "\r", "\t"]:
                     end -= 1
-            # If the entire chunk is a word, then just split it at chunk_size
             if end == start:
                 end = start + self.chunk_size
             chunk = content[start:end]
@@ -349,21 +309,15 @@ class FixedSizeChunking(ChunkingStrategy):
             start = end - self.overlap
         return chunked_documents
 
-class RecursiveChunking(ChunkingStrategy):
-    """Chunking strategy that recursively splits text into chunks by finding natural break points"""
 
+class RecursiveChunking(ChunkingStrategy):
     def __init__(self, chunk_size: int = 5000, overlap: int = 0):
-        # overlap must be less than chunk size
         if overlap >= chunk_size:
             raise ValueError(f"Invalid parameters: overlap ({overlap}) must be less than chunk size ({chunk_size}).")
-        if overlap > chunk_size * 0.15:
-            warnings.warn(f"High overlap: {overlap} > 15% of chunk size ({chunk_size}). May cause slow processing.",
-                RuntimeWarning)
         self.chunk_size = chunk_size
         self.overlap = overlap
 
     def chunk(self, document: Document) -> List[Document]:
-        """Recursively chunk text by finding natural break points"""
         if len(document.content) <= self.chunk_size:
             return [document]
         chunks: List[Document] = []
@@ -389,14 +343,13 @@ class RecursiveChunking(ChunkingStrategy):
             meta_data["chunk_size"] = len(chunk)
             chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk))
             new_start = end - self.overlap
-            if new_start <= start:  # Prevent infinite loop
-                new_start = min(len(content), start + max(1, self.chunk_size // 10))  # Move forward by at least 10% of chunk size
+            if new_start <= start:
+                new_start = min(len(content), start + max(1, self.chunk_size // 10))
             start = new_start
         return chunks
 
-class SemanticChunking(ChunkingStrategy):
-    """Chunking strategy that splits text into semantic chunks using chonkie"""
 
+class SemanticChunking(ChunkingStrategy):
     def __init__(self, embedder = None, chunk_size: int = 5000, similarity_threshold: Optional[float] = 0.5):
         self.embedder = embedder or OllamaEmbedder()
         self.chunk_size = chunk_size
@@ -406,12 +359,9 @@ class SemanticChunking(ChunkingStrategy):
             threshold=self.similarity_threshold)
 
     def chunk(self, document: Document) -> List[Document]:
-        """Split document into semantic chunks using chokie"""
         if not document.content:
             return [document]
-        # Use chonkie to split into semantic chunks
         chunks = self.chunker.chunk(self.clean_text(document.content))
-        # Convert chunks to Documents
         chunked_documents: List[Document] = []
         for i, chunk in enumerate(chunks, 1):
             meta_data = document.meta_data.copy()
@@ -421,9 +371,9 @@ class SemanticChunking(ChunkingStrategy):
             chunked_documents.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk.text))
         return chunked_documents
 
+
 @dataclass
 class Reader:
-    """Base class for reading documents"""
     chunk: bool = True
     chunk_size: int = 3000
     separators: List[str] = field(default_factory=lambda: ["\n", "\n\n", "\r", "\r\n", "\n\r", "\t", " ", "  "])
@@ -431,30 +381,23 @@ class Reader:
 
     def read(self, obj: Any) -> List[Document]:
         raise NotImplementedError
+
     async def async_read(self, obj: Any) -> List[Document]:
         raise NotImplementedError
 
     def chunk_document(self, document: Document) -> List[Document]:
         return self.chunking_strategy.chunk(document)
+
     async def chunk_documents_async(self, documents: List[Document]) -> List[Document]:
-        """
-        Asynchronously chunk a list of documents using the instance's chunk_document method.
-        Args:
-            documents: List of documents to be chunked.
-        Returns:
-            A flattened list of chunked documents.
-        """
         async def _chunk_document_async(doc: Document) -> List[Document]:
             return await asyncio.to_thread(self.chunk_document, doc)
-        # Process chunking in parallel for all documents
         chunked_lists = await asyncio.gather(*[_chunk_document_async(doc) for doc in documents])
-        # Flatten the result
         return [chunk for sublist in chunked_lists for chunk in sublist]
+
 
 def fetch_with_retry(url: str,
     max_retries: int = 3,
     backoff_factor: int = 2):
-    """Synchronous HTTP GET with retry logic."""
     for attempt in range(max_retries):
         try:
             response = httpx.get(url)
@@ -466,15 +409,14 @@ def fetch_with_retry(url: str,
                 raise
             wait_time = backoff_factor**attempt
             print(f"Request failed (attempt {attempt + 1}), retrying in {wait_time} seconds...")
-            sleep(wait_time)
+            time.sleep(wait_time)
         except httpx.HTTPStatusError as e:
             print(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
             raise
     raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")
 
-class CSVReader(Reader):
-    """Reader for CSV files"""
 
+class CSVReader(Reader):
     def read(self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"') -> List[Document]:
         try:
             if isinstance(file, Path):
@@ -506,17 +448,8 @@ class CSVReader(Reader):
         except Exception as e:
             print(f"Error reading: {file.name if isinstance(file, IO) else file}: {e}")
             return []
+
     async def async_read(self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"', page_size: int = 1000) -> List[Document]:
-        """
-        Read a CSV file asynchronously, processing batches of rows concurrently.
-        Args:
-            file: Path or file-like object
-            delimiter: CSV delimiter
-            quotechar: CSV quote character
-            page_size: Number of rows per page
-        Returns:
-            List of Document objects
-        """
         try:
             if isinstance(file, Path):
                 if not file.exists():
@@ -561,14 +494,12 @@ class CSVReader(Reader):
             print(f"Error reading async: {file.name if isinstance(file, IO) else file}: {e}")
             return []
 
-class CSVUrlReader(Reader):
-    """Reader for CSV files"""
 
+class CSVUrlReader(Reader):
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No URL provided")
         print(f"Reading: {url}")
-        # Retry the request up to 3 times with exponential backoff
         response = fetch_with_retry(url)
         parsed_url = urlparse(url)
         filename = os.path.basename(parsed_url.path) or "data.csv"
@@ -578,16 +509,15 @@ class CSVUrlReader(Reader):
         file_obj.close()
         return documents
 
-class DocxReader(Reader):
-    """Reader for Doc/Docx files"""
 
+class DocxReader(Reader):
     def read(self, file: Union[Path, io.BytesIO]) -> List[Document]:
         try:
             if isinstance(file, Path):
                 print(f"Reading: {file}")
                 docx_document = DocxDocument(str(file))
                 doc_name = file.stem
-            else:  # Handle file-like object from upload
+            else:
                 print(f"Reading uploaded file: {file.name}")
                 docx_document = DocxDocument(file)
                 doc_name = file.name.split(".")[0]
@@ -607,6 +537,7 @@ class DocxReader(Reader):
             print(f"Error reading file: {e}")
             return []
 
+
 def process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
     try:
         import rapidocr_onnxruntime as rapidocr
@@ -615,21 +546,18 @@ def process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
     ocr = rapidocr.RapidOCR()
     page_text = page.extract_text() or ""
     images_text_list = []
-    # Extract and process images
     for image_object in page.images:
         image_data = image_object.data
-        # Perform OCR on the image
         ocr_result, elapse = ocr(image_data)
-        # Extract text from OCR result
         if ocr_result:
             images_text_list += [item[1] for item in ocr_result]
     images_text = "\n".join(images_text_list)
     content = page_text + "\n" + images_text
-    # Append the document
     return Document(name=doc_name,
         id=f"{doc_name}_{page_number}",
         meta_data={"page": page_number},
         content=content)
+
 
 async def async_process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
     try:
@@ -639,7 +567,6 @@ async def async_process_image_page(doc_name: str, page_number: int, page: Any) -
     ocr = rapidocr.RapidOCR()
     page_text = page.extract_text() or ""
     images_text_list: List = []
-    # Process images in parallel
     async def process_image(image_data: bytes) -> List[str]:
         ocr_result, _ = ocr(image_data)
         return [item[1] for item in ocr_result] if ocr_result else []
@@ -654,17 +581,16 @@ async def async_process_image_page(doc_name: str, page_number: int, page: Any) -
         meta_data={"page": page_number},
         content=content)
 
-class BasePDFReader(Reader):
 
+class BasePDFReader(Reader):
     def _build_chunked_documents(self, documents: List[Document]) -> List[Document]:
         chunked_documents: List[Document] = []
         for document in documents:
             chunked_documents.extend(self.chunk_document(document))
         return chunked_documents
 
-class PDFReader(BasePDFReader):
-    """Reader for PDF files"""
 
+class PDFReader(BasePDFReader):
     def read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
         try:
             if isinstance(pdf, str):
@@ -688,6 +614,7 @@ class PDFReader(BasePDFReader):
         if self.chunk:
             return self._build_chunked_documents(documents)
         return documents
+
     async def async_read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
         try:
             if isinstance(pdf, str):
@@ -707,7 +634,6 @@ class PDFReader(BasePDFReader):
                 id=f"{doc_name}_{page_number}",
                 meta_data={"page": page_number},
                 content=page.extract_text())
-        # Process pages in parallel using asyncio.gather
         documents = await asyncio.gather(*[
                 _process_document(doc_name, page_number, page)
                 for page_number, page in enumerate(doc_reader.pages, start=1)
@@ -716,27 +642,25 @@ class PDFReader(BasePDFReader):
             return self._build_chunked_documents(documents)
         return documents
 
-class PDFUrlReader(BasePDFReader):
-    """Reader for PDF files from URL"""
 
+class PDFUrlReader(BasePDFReader):
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
         from io import BytesIO
         import httpx
         print(f"Reading: {url}")
-        # Retry the request up to 3 times with exponential backoff
         for attempt in range(3):
             try:
                 response = httpx.get(url)
                 break
             except httpx.RequestError as e:
-                if attempt == 2:  # Last attempt
+                if attempt == 2:
                     print(f"Failed to fetch PDF after 3 attempts: {e}")
                     raise
-                wait_time = 2**attempt  # Exponential backoff: 1, 2, 4 seconds
+                wait_time = 2**attempt
                 print(f"Request failed, retrying in {wait_time} seconds...")
-                sleep(wait_time)
+                time.sleep(wait_time)
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
@@ -753,6 +677,7 @@ class PDFUrlReader(BasePDFReader):
         if self.chunk:
             return self._build_chunked_documents(documents)
         return documents
+
     async def async_read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
@@ -763,13 +688,12 @@ class PDFUrlReader(BasePDFReader):
             raise ImportError("`httpx` not installed. Please install it via `pip install httpx`.")
         print(f"Reading: {url}")
         async with httpx.AsyncClient() as client:
-            # Retry the request up to 3 times with exponential backoff
             for attempt in range(3):
                 try:
                     response = await client.get(url)
                     break
                 except httpx.RequestError as e:
-                    if attempt == 2:  # Last attempt
+                    if attempt == 2:
                         print(f"Failed to fetch PDF after 3 attempts: {e}")
                         raise
                     wait_time = 2**attempt
@@ -787,7 +711,6 @@ class PDFUrlReader(BasePDFReader):
                 id=f"{doc_name}_{page_number}",
                 meta_data={"page": page_number},
                 content=page.extract_text())
-        # Process pages in parallel using asyncio.gather
         documents = await asyncio.gather(*[
                 _process_document(doc_name, page_number, page)
                 for page_number, page in enumerate(doc_reader.pages, start=1)
@@ -796,9 +719,8 @@ class PDFUrlReader(BasePDFReader):
             return self._build_chunked_documents(documents)
         return documents
 
-class PDFImageReader(BasePDFReader):
-    """Reader for PDF files with text and images extraction"""
 
+class PDFImageReader(BasePDFReader):
     def read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
         if not pdf:
             raise ValueError("No pdf provided")
@@ -817,6 +739,7 @@ class PDFImageReader(BasePDFReader):
         if self.chunk:
             return self._build_chunked_documents(documents)
         return documents
+
     async def async_read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
         if not pdf:
             raise ValueError("No pdf provided")
@@ -837,15 +760,13 @@ class PDFImageReader(BasePDFReader):
             return self._build_chunked_documents(documents)
         return documents
 
-class PDFUrlImageReader(BasePDFReader):
-    """Reader for PDF files from URL with text and images extraction"""
 
+class PDFUrlImageReader(BasePDFReader):
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
         from io import BytesIO
         import httpx
-        # Read the PDF from the URL
         print(f"Reading: {url}")
         response = httpx.get(url)
         doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
@@ -853,10 +774,10 @@ class PDFUrlImageReader(BasePDFReader):
         documents = []
         for page_number, page in enumerate(doc_reader.pages, start=1):
             documents.append(process_image_page(doc_name, page_number, page))
-        # Optionally chunk documents
         if self.chunk:
             return self._build_chunked_documents(documents)
         return documents
+
     async def async_read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
@@ -876,9 +797,8 @@ class PDFUrlImageReader(BasePDFReader):
             return self._build_chunked_documents(documents)
         return documents
 
-class TextReader(Reader):
-    """Reader for Text files"""
 
+class TextReader(Reader):
     def read(self, file: Union[Path, IO[Any]]) -> List[Document]:
         try:
             if isinstance(file, Path):
@@ -906,6 +826,7 @@ class TextReader(Reader):
         except Exception as e:
             print(f"Error reading: {file}: {e}")
             return []
+
     async def async_read(self, file: Union[Path, IO[Any]]) -> List[Document]:
         try:
             if isinstance(file, Path):
@@ -934,6 +855,7 @@ class TextReader(Reader):
         except Exception as e:
             print(f"Error reading asynchronously: {file}: {e}")
             return []
+
     async def _async_chunk_document(self, document: Document) -> List[Document]:
         if not self.chunk or not document:
             return [document]
@@ -945,9 +867,8 @@ class TextReader(Reader):
         tasks = [process_chunk(chunk_doc) for chunk_doc in chunked_documents]
         return await asyncio.gather(*tasks)
 
-class URLReader(Reader):
-    """Reader for general URL content"""
 
+class URLReader(Reader):
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
@@ -956,18 +877,17 @@ class URLReader(Reader):
         except ImportError:
             raise ImportError("`httpx` not installed. Please install it via `pip install httpx`.")
         print(f"Reading: {url}")
-        # Retry the request up to 3 times with exponential backoff
         for attempt in range(3):
             try:
                 response = httpx.get(url)
                 break
             except httpx.RequestError as e:
-                if attempt == 2:  # Last attempt
+                if attempt == 2:
                     print(f"Failed to fetch PDF after 3 attempts: {e}")
                     raise
-                wait_time = 2**attempt  # Exponential backoff: 1, 2, 4 seconds
+                wait_time = 2**attempt
                 print(f"Request failed, retrying in {wait_time} seconds...")
-                sleep(wait_time)
+                time.sleep(wait_time)
         try:
             print(f"Status: {response.status_code}")
             print(f"Content size: {len(response.content)} bytes")
@@ -978,12 +898,10 @@ class URLReader(Reader):
         except httpx.HTTPStatusError as e:
             print(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
             raise
-        # Create a clean document name from the URL
         parsed_url = urlparse(url)
         doc_name = parsed_url.path.strip("/").replace("/", "_").replace(" ", "_")
         if not doc_name:
             doc_name = parsed_url.netloc
-        # Create a single document with the URL content
         document = Document(name=doc_name,
             id=doc_name,
             meta_data={"url": url},
@@ -991,6 +909,7 @@ class URLReader(Reader):
         if self.chunk:
             return self.chunk_document(document)
         return [document]
+
 
 @dataclass
 class WebsiteReader(Reader):
@@ -1001,39 +920,18 @@ class WebsiteReader(Reader):
     _urls_to_crawl: List[Tuple[str, int]] = field(default_factory=list)
 
     def delay(self, min_seconds=1, max_seconds=3):
-        """
-        Introduce a random delay.
-        :param min_seconds: Minimum number of seconds to delay. Default is 1.
-        :param max_seconds: Maximum number of seconds to delay. Default is 3.
-        """
         sleep_time = random.uniform(min_seconds, max_seconds)
         time.sleep(sleep_time)
+
     async def async_delay(self, min_seconds=1, max_seconds=3):
-        """
-        Introduce a random delay asynchronously.
-        :param min_seconds: Minimum number of seconds to delay. Default is 1.
-        :param max_seconds: Maximum number of seconds to delay. Default is 3.
-        """
         sleep_time = random.uniform(min_seconds, max_seconds)
         await asyncio.sleep(sleep_time)
 
     def _get_primary_domain(self, url: str) -> str:
-        """
-        Extract primary domain from the given URL.
-        :param url: The URL to extract the primary domain from.
-        :return: The primary domain.
-        """
         domain_parts = urlparse(url).netloc.split(".")
-        # Return primary domain (excluding subdomains)
         return ".".join(domain_parts[-2:])
 
     def _extract_main_content(self, soup: BeautifulSoup) -> str:
-        """
-        Extracts the main content from a BeautifulSoup object.
-        :param soup: The BeautifulSoup object to extract the main content from.
-        :return: The main content.
-        """
-        # Try to find main content by specific tags or class names
         for tag in ["article", "main"]:
             element = soup.find(tag)
             if element:
@@ -1045,33 +943,12 @@ class WebsiteReader(Reader):
         return ""
 
     def crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
-        """
-        Crawls a website and returns a dictionary of URLs and their corresponding content.
-        Parameters:
-        - url (str): The starting URL to begin the crawl.
-        - starting_depth (int, optional): The starting depth level for the crawl. Defaults to 1.
-        Returns:
-        - Dict[str, str]: A dictionary where each key is a URL and the corresponding value is the main
-                          content extracted from that URL.
-        Note:
-        The function focuses on extracting the main content by prioritizing content inside common HTML tags
-        like `<article>`, `<main>`, and `<div>` with class names such as "content", "main-content", etc.
-        The crawler will also respect the `max_depth` attribute of the WebCrawler class, ensuring it does not
-        crawl deeper than the specified depth.
-        """
         num_links = 0
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
-        # Add starting URL with its depth to the global list
         self._urls_to_crawl.append((url, starting_depth))
         while self._urls_to_crawl:
-            # Unpack URL and depth from the global list
             current_url, current_depth = self._urls_to_crawl.pop(0)
-            # Skip if
-            # - URL is already visited
-            # - does not end with the primary domain,
-            # - exceeds max depth
-            # - exceeds max links
             if (current_url in self._visited
                 or not urlparse(current_url).netloc.endswith(primary_domain)
                 or current_depth > self.max_depth
@@ -1084,12 +961,10 @@ class WebsiteReader(Reader):
                 response = httpx.get(current_url, timeout=10)
                 response.raise_for_status()
                 soup = BeautifulSoup(response.content, "html.parser")
-                # Extract main content
                 main_content = self._extract_main_content(soup)
                 if main_content:
                     crawler_result[current_url] = main_content
                     num_links += 1
-                # Add found URLs to the global list, with incremented depth
                 for link in soup.find_all("a", href=True):
                     if not isinstance(link, Tag):
                         continue
@@ -1107,20 +982,11 @@ class WebsiteReader(Reader):
                 print(f"Failed to crawl: {current_url}: {e}")
                 pass
         return crawler_result
+
     async def async_crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
-        """
-        Asynchronously crawls a website and returns a dictionary of URLs and their corresponding content.
-        Parameters:
-        - url (str): The starting URL to begin the crawl.
-        - starting_depth (int, optional): The starting depth level for the crawl. Defaults to 1.
-        Returns:
-        - Dict[str, str]: A dictionary where each key is a URL and the corresponding value is the main
-                        content extracted from that URL.
-        """
         num_links = 0
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
-        # Clear previously visited URLs and URLs to crawl
         self._visited = set()
         self._urls_to_crawl = [(url, starting_depth)]
         async with httpx.AsyncClient() as client:
@@ -1138,12 +1004,10 @@ class WebsiteReader(Reader):
                     response = await client.get(current_url, timeout=10, follow_redirects=True)
                     response.raise_for_status()
                     soup = BeautifulSoup(response.content, "html.parser")
-                    # Extract main content
                     main_content = self._extract_main_content(soup)
                     if main_content:
                         crawler_result[current_url] = main_content
                         num_links += 1
-                    # Add found URLs to the list, with incremented depth
                     for link in soup.find_all("a", href=True):
                         if not isinstance(link, Tag):
                             continue
@@ -1162,13 +1026,6 @@ class WebsiteReader(Reader):
         return crawler_result
 
     def read(self, url: str) -> List[Document]:
-        """
-        Reads a website and returns a list of documents.
-        This function first converts the website into a dictionary of URLs and their corresponding content.
-        Then iterates through the dictionary and returns chunks of content.
-        :param url: The URL of the website to read.
-        :return: A list of documents.
-        """
         print(f"Reading: {url}")
         crawler_result = self.crawl(url)
         documents = []
@@ -1181,35 +1038,19 @@ class WebsiteReader(Reader):
                         meta_data={"url": str(crawled_url)},
                         content=crawled_content))
         return documents
+
     async def async_read(self, url: str) -> List[Document]:
-        """
-        Asynchronously reads a website and returns a list of documents.
-        This function first converts the website into a dictionary of URLs and their corresponding content.
-        Then iterates through the dictionary and returns chunks of content.
-        :param url: The URL of the website to read.
-        :return: A list of documents.
-        """
         print(f"Reading asynchronously: {url}")
         crawler_result = await self.async_crawl(url)
         documents = []
-        # Process documents in parallel
         async def process_document(crawled_url, crawled_content):
             if self.chunk:
                 doc = Document(name=url, id=str(crawled_url), meta_data={"url": str(crawled_url)}, content=crawled_content)
                 return self.chunk_document(doc)
             else:
-                return [
-                    Document(name=url,
-                        id=str(crawled_url),
-                        meta_data={"url": str(crawled_url)},
-                        content=crawled_content)
-                ]
-        # Use asyncio.gather to process all documents in parallel
-        tasks = [
-            process_document(crawled_url, crawled_content) for crawled_url, crawled_content in crawler_result.items()
-        ]
+                return [Document(name=url, id=str(crawled_url), meta_data={"url": str(crawled_url)}, content=crawled_content)]
+        tasks = [process_document(crawled_url, crawled_content) for crawled_url, crawled_content in crawler_result.items()]
         results = await asyncio.gather(*tasks)
-        # Flatten the results
         for doc_list in results:
             documents.extend(doc_list)
         return documents

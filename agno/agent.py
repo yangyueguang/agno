@@ -747,7 +747,7 @@ class Agent:
         self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
         print(f"Async Agent Run Start: {self.run_response.run_id}")
-        self.update_model(async_mode=True)  # use async search for vector db
+        self.update_model(async_mode=True)
         self.run_response.model = self.model.id if self.model is not None else None
         if self.context is not None and self.resolve_context:
             self.resolve_run_context()
@@ -1425,7 +1425,6 @@ class Agent:
                                 for prop_name, prop_value in field_properties.items()
                                 if prop_name != "title"
                             }
-                            # Handle enum references
                             if "allOf" in formatted_field_properties:
                                 ref = formatted_field_properties["allOf"][0].get("$ref", "")
                                 if ref.startswith("#/$defs/"):
@@ -2949,7 +2948,6 @@ class Agent:
                             response_content_batch = JSON(json.dumps(run_response.content), indent=4)
                         except Exception as e:
                             print(f"Failed to convert response to JSON: {e}")
-                # Create panel for response
                 response_panel = create_panel(content=response_content_batch,
                     title=f"Response ({response_timer.elapsed:.1f}s)",
                     border_style="blue")

@@ -12,13 +12,15 @@
   <a href="https://docs.agno.com/examples/introduction">💡 Examples</a> &nbsp;|&nbsp;
   <a href="https://github.com/agno-agi/agno/stargazers">🌟 Star Us</a>
 </div>
-## Introduction
+
+## 说明
 [Agno](https://docs.agno.com) 简化板
 To run the agent, install dependencies and export your `OPENAI_API_KEY`.
 ```shell
 pip install agno openai
 export OPENAI_API_KEY=sk-xxxx
 ```
+
 ```python websearch_agent.py
 from agno.agent import Agent
 from agno.ollama import Ollama
@@ -51,11 +53,8 @@ agent.print_response("Tell me about a breaking news story from New York.", strea
 ```python
 from agno.agent import Agent
 from agno.ollama import Ollama
-from agno.reader import OllamaEmbedder
 from agno.knowledge import PDFUrlKnowledgeBase
-from agno.vectordb import SearchType
 agent = Agent(model=Ollama(),
-
     description="You are a Thai cuisine expert!",
     instructions=[
         "Search your knowledge base for Thai recipes.",
@@ -66,7 +65,6 @@ agent = Agent(model=Ollama(),
     tools=[lambda x: 'hello'],
     show_tool_calls=True,
     markdown=True)
-# Comment out after the knowledge base is loaded
 if agent.knowledge is not None:
     agent.knowledge.load()
 agent.print_response("How do I make chicken and galangal in coconut milk soup", stream=True)

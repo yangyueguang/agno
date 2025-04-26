@@ -1,44 +1,29 @@
 import time
-from pathlib import Path
-from sqlalchemy.dialects import sqlite
-from sqlalchemy.types import String
 import json
-from sqlalchemy.dialects import mysql
+from pathlib import Path
+from sqlalchemy.dialects import sqlite, mysql
+from sqlalchemy.types import String
 from sqlalchemy.engine import Engine, create_engine
 from sqlalchemy.engine.row import Row
 from sqlalchemy.inspection import inspect
-from sqlalchemy.orm import Session as SqlSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session as SqlSession
 from sqlalchemy.schema import Column, MetaData, Table
 from sqlalchemy.sql.expression import select, text
 from abc import ABC, abstractmethod
-from typing import List, Literal, Optional
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Mapping, Optional
-from typing import Union
+from typing import List, Literal, Optional, Any, Dict, Mapping, Optional, Union
 
 @dataclass
 class AgentSession:
-    """Agent Session that is stored in the database"""
-    # Session UUID
     session_id: str
-    # ID of the user interacting with this agent
     user_id: Optional[str] = None
-    # ID of the team session this agent session is associated with
     team_session_id: Optional[str] = None
-    # Agent Memory
     memory: Optional[Dict[str, Any]] = None
-    # Session Data: session_name, session_state, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
-    # Extra Data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
-    # The unix timestamp when this session was created
     created_at: Optional[int] = None
-    # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
-    # ID of the agent that this session is associated with
     agent_id: Optional[str] = None
-    # Agent Data: agent_id, name and model
     agent_data: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -50,8 +35,8 @@ class AgentSession:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
-    @classmethod
 
+    @classmethod
     def from_dict(cls, data: Mapping[str, Any]):
         if data is None or data.get("session_id") is None:
             print("AgentSession is missing session_id")
@@ -67,28 +52,18 @@ class AgentSession:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"))
 
+
 @dataclass
 class TeamSession:
-    """Team Session that is stored in the database"""
-    # Session UUID
     session_id: str
-    # ID of the team session this team session is associated with (so for sub-teams)
     team_session_id: Optional[str] = None
-    # ID of the team that this session is associated with
     team_id: Optional[str] = None
-    # ID of the user interacting with this team
     user_id: Optional[str] = None
-    # Team Memory
     memory: Optional[Dict[str, Any]] = None
-    # Team Data: agent_id, name and model
     team_data: Optional[Dict[str, Any]] = None
-    # Session Data: session_name, session_state, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
-    # Extra Data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
-    # The unix timestamp when this session was created
     created_at: Optional[int] = None
-    # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -100,8 +75,8 @@ class TeamSession:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
-    @classmethod
 
+    @classmethod
     def from_dict(cls, data: Mapping[str, Any]):
         if data is None or data.get("session_id") is None:
             print("AgentSession is missing session_id")
@@ -117,26 +92,17 @@ class TeamSession:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"))
 
+
 @dataclass
 class WorkflowSession:
-    """Workflow Session that is stored in the database"""
-    # Session UUID
     session_id: str
-    # ID of the user interacting with this agent
     user_id: Optional[str] = None
-    # Agent Memory
     memory: Optional[Dict[str, Any]] = None
-    # Session Data: session_name, session_state, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
-    # Extra Data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
-    # The unix timestamp when this session was created
     created_at: Optional[int] = None
-    # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
-    # ID of the workflow that this session is associated with
     workflow_id: Optional[str] = None
-    # Workflow Data
     workflow_data: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -150,8 +116,8 @@ class WorkflowSession:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
-    @classmethod
 
+    @classmethod
     def from_dict(cls, data: Mapping[str, Any]):
         if data is None or data.get("session_id") is None:
             print("WorkflowSession is missing session_id")
@@ -169,54 +135,51 @@ class WorkflowSession:
 Session = Union[AgentSession, TeamSession, WorkflowSession]
 
 class Storage(ABC):
-
     def __init__(self, mode: Optional[Literal["agent", "team", "workflow"]] = "agent"):
         self._mode: Literal["agent", "team", "workflow"] = "agent" if mode is None else mode
+
     @property
-
     def mode(self) -> Literal["agent", "team", "workflow"]:
-        """Get the mode of the storage."""
         return self._mode
+
     @mode.setter
-
     def mode(self, value: Optional[Literal["agent", "team", "workflow"]]) -> None:
-        """Set the mode of the storage."""
         self._mode = "agent" if value is None else value
-    @abstractmethod
 
+    @abstractmethod
     def create(self) -> None:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def get_all_session_ids(self, user_id: Optional[str] = None, agent_id: Optional[str] = None) -> List[str]:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def upsert(self, session: Session) -> Optional[Session]:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def delete_session(self, session_id: Optional[str] = None):
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def drop(self) -> None:
         raise NotImplementedError
-    @abstractmethod
 
+    @abstractmethod
     def upgrade_schema(self) -> None:
         raise NotImplementedError
 
-class SingleStoreStorage(Storage):
 
+class SingleStoreStorage(Storage):
     def __init__(self,
         table_name: str,
         schema: Optional[str] = "ai",
@@ -225,50 +188,29 @@ class SingleStoreStorage(Storage):
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
         mode: Optional[Literal["agent", "team", "workflow"]] = "agent"):
-        """
-        This class provides Agent storage using a singlestore table.
-        The following order is used to determine the database connection:
-            1. Use the db_engine if provided
-            2. Use the db_url if provided
-        Args:
-            table_name (str): The name of the table to store the agent data.
-            schema (Optional[str], optional): The schema of the table. Defaults to "ai".
-            db_url (Optional[str], optional): The database URL. Defaults to None.
-            db_engine (Optional[Engine], optional): The database engine. Defaults to None.
-            schema_version (int, optional): The schema version. Defaults to 1.
-            auto_upgrade_schema (bool, optional): Automatically upgrade the schema. Defaults to False.
-            mode (Optional[Literal["agent", "team", "workflow"]], optional): The mode of the storage. Defaults to "agent".
-        """
         super().__init__(mode)
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
             _engine = create_engine(db_url, connect_args={"charset": "utf8mb4"})
         if _engine is None:
             raise ValueError("Must provide either db_url or db_engine")
-        # Database attributes
         self.table_name: str = table_name
         self.schema: Optional[str] = schema
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = _engine
         self.metadata: MetaData = MetaData(schema=self.schema)
-        # Table schema version
         self.schema_version: int = schema_version
-        # Automatically upgrade schema if True
         self.auto_upgrade_schema: bool = auto_upgrade_schema
         self._schema_up_to_date: bool = False
-        # Database session
         self.SqlSession: sessionmaker[SqlSession] = sessionmaker(bind=self.db_engine)
-        # Database table for storage
         self.table: Table = self.get_table()
+
     @property
-
     def mode(self) -> Literal["agent", "team", "workflow"]:
-        """Get the mode of the storage."""
         return super().mode
-    @mode.setter
 
+    @mode.setter
     def mode(self, value: Optional[Literal["agent", "team", "workflow"]]) -> None:
-        """Set the mode and refresh the table if mode changes."""
         super(SingleStoreStorage, type(self)).mode.fset(self, value)
         if value is not None:
             self.table = self.get_table()
@@ -301,7 +243,6 @@ class SingleStoreStorage(Storage):
                 Column("workflow_id", mysql.TEXT),
                 Column("workflow_data", mysql.JSON),
             ]
-        # Create table with all columns
         table = Table(self.table_name,
             self.metadata,
             *common_columns,
@@ -359,7 +300,6 @@ class SingleStoreStorage(Storage):
         session_ids: List[str] = []
         try:
             with self.SqlSession.begin() as sess:
-                # get all session_ids for this user
                 stmt = select(self.table)
                 if user_id is not None:
                     stmt = stmt.where(self.table.c.user_id == user_id)
@@ -370,9 +310,7 @@ class SingleStoreStorage(Storage):
                         stmt = stmt.where(self.table.c.team_id == entity_id)
                     elif self.mode == "workflow":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
-                # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
-                # execute query
                 rows = sess.execute(stmt).fetchall()
                 for row in rows:
                     if row is not None and row.session_id is not None:
@@ -385,7 +323,6 @@ class SingleStoreStorage(Storage):
         sessions: List[Session] = []
         try:
             with self.SqlSession.begin() as sess:
-                # get all sessions for this user
                 stmt = select(self.table)
                 if user_id is not None:
                     stmt = stmt.where(self.table.c.user_id == user_id)
@@ -396,9 +333,7 @@ class SingleStoreStorage(Storage):
                         stmt = stmt.where(self.table.c.team_id == entity_id)
                     elif self.mode == "workflow":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
-                # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
-                # execute query
                 rows = sess.execute(stmt).fetchall()
                 for row in rows:
                     if row.session_id is not None:
@@ -419,17 +354,12 @@ class SingleStoreStorage(Storage):
         return sessions
 
     def upgrade_schema(self) -> None:
-        """
-        Upgrade the schema to the latest version.
-        Currently handles adding the team_session_id column for agent mode.
-        """
         if not self.auto_upgrade_schema:
             print("Auto schema upgrade disabled. Skipping upgrade.")
             return
         try:
             if self.mode == "agent" and self.table_exists():
                 with self.SqlSession() as sess:
-                    # Check if team_session_id column exists
                     column_exists_query = text("""
                         SELECT 1 FROM information_schema.columns
                         WHERE table_schema = :schema AND table_name = :table
@@ -449,14 +379,9 @@ class SingleStoreStorage(Storage):
             raise
 
     def upsert(self, session: Session) -> Optional[Session]:
-        """
-        Create a new session if it does not exist, otherwise update the existing session.
-        """
-        # Perform schema upgrade if auto_upgrade_schema is enabled
         if self.auto_upgrade_schema and not self._schema_up_to_date:
             self.upgrade_schema()
         with self.SqlSession.begin() as sess:
-            # Create an insert statement using MySQL's ON DUPLICATE KEY UPDATE syntax
             if self.mode == "agent":
                 upsert_sql = text(f"""
                     INSERT INTO {self.schema}.{self.table_name}
@@ -565,7 +490,6 @@ class SingleStoreStorage(Storage):
                             else None,
                         })
             except Exception as e:
-                # Create table and try again
                 if not self.table_exists():
                     print(f"Table does not exist: {self.table.name}")
                     print("Creating table and retrying upsert")
@@ -583,7 +507,6 @@ class SingleStoreStorage(Storage):
             return
         with self.SqlSession() as sess, sess.begin():
             try:
-                # Delete the session with the given session_id
                 delete_stmt = self.table.delete().where(self.table.c.session_id == session_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
@@ -608,26 +531,22 @@ class SingleStoreStorage(Storage):
             SingleStoreStorage: A deep-copied instance of SingleStoreAgentStorage.
         """
         from copy import deepcopy
-        # Create a new instance without calling __init__
         cls = self.__class__
         copied_obj = cls.__new__(cls)
         memo[id(self)] = copied_obj
-        # Deep copy attributes
         for k, v in self.__dict__.items():
             if k in {"metadata", "table"}:
                 continue
-            # Reuse db_engine and Session without copying
             elif k in {"db_engine", "SqlSession"}:
                 setattr(copied_obj, k, v)
             else:
                 setattr(copied_obj, k, deepcopy(v, memo))
-        # Recreate metadata and table for the copied instance
         copied_obj.metadata = MetaData(schema=self.schema)
         copied_obj.table = copied_obj.get_table()
         return copied_obj
 
-class SqliteStorage(Storage):
 
+class SqliteStorage(Storage):
     def __init__(self,
         table_name: str,
         db_url: Optional[str] = None,
@@ -636,67 +555,40 @@ class SqliteStorage(Storage):
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
         mode: Optional[Literal["agent", "team", "workflow"]] = "agent"):
-        """
-        This class provides agent storage using a sqlite database.
-        The following order is used to determine the database connection:
-            1. Use the db_engine if provided
-            2. Use the db_url
-            3. Use the db_file
-            4. Create a new in-memory database
-        Args:
-            table_name: The name of the table to store Agent sessions.
-            db_url: The database URL to connect to.
-            db_file: The database file to connect to.
-            db_engine: The SQLAlchemy database engine to use.
-        """
         super().__init__(mode)
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
             _engine = create_engine(db_url)
         elif _engine is None and db_file is not None:
-            # Use the db_file to create the engine
             db_path = Path(db_file).resolve()
-            # Ensure the directory exists
             db_path.parent.mkdir(parents=True, exist_ok=True)
             _engine = create_engine(f"sqlite:///{db_path}")
         else:
             _engine = create_engine("sqlite://")
         if _engine is None:
             raise ValueError("Must provide either db_url, db_file or db_engine")
-        # Database attributes
         self.table_name: str = table_name
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = _engine
         self.metadata: MetaData = MetaData()
         self.inspector = inspect(self.db_engine)
-        # Table schema version
         self.schema_version: int = schema_version
-        # Automatically upgrade schema if True
         self.auto_upgrade_schema: bool = auto_upgrade_schema
         self._schema_up_to_date: bool = False
-        # Database session
         self.SqlSession: sessionmaker[SqlSession] = sessionmaker(bind=self.db_engine)
-        # Database table for storage
         self.table: Table = self.get_table()
+
     @property
-
     def mode(self) -> Optional[Literal["agent", "team", "workflow"]]:
-        """Get the mode of the storage."""
         return super().mode
-    @mode.setter
 
+    @mode.setter
     def mode(self, value: Optional[Literal["agent", "team", "workflow"]]) -> None:
-        """Set the mode and refresh the table if mode changes."""
         super(SqliteStorage, type(self)).mode.fset(self, value)
         if value is not None:
             self.table = self.get_table()
 
     def get_table_v1(self) -> Table:
-        """
-        Define the table schema for version 1.
-        Returns:
-            Table: SQLAlchemy Table object representing the schema.
-        """
         common_columns = [
             Column("session_id", String, primary_key=True),
             Column("user_id", String, index=True),
@@ -706,7 +598,6 @@ class SqliteStorage(Storage):
             Column("created_at", sqlite.INTEGER, default=lambda: int(time.time())),
             Column("updated_at", sqlite.INTEGER, onupdate=lambda: int(time.time())),
         ]
-        # Mode-specific columns
         specific_columns = []
         if self.mode == "agent":
             specific_columns = [
@@ -725,7 +616,6 @@ class SqliteStorage(Storage):
                 Column("workflow_id", String, index=True),
                 Column("workflow_data", sqlite.JSON),
             ]
-        # Create table with all columns
         table = Table(self.table_name,
             self.metadata,
             *common_columns,
@@ -735,26 +625,13 @@ class SqliteStorage(Storage):
         return table
 
     def get_table(self) -> Table:
-        """
-        Get the table schema based on the schema version.
-        Returns:
-            Table: SQLAlchemy Table object for the current schema version.
-        Raises:
-            ValueError: If an unsupported schema version is specified.
-        """
         if self.schema_version == 1:
             return self.get_table_v1()
         else:
             raise ValueError(f"Unsupported schema version: {self.schema_version}")
 
     def table_exists(self) -> bool:
-        """
-        Check if the table exists in the database.
-        Returns:
-            bool: True if the table exists, False otherwise.
-        """
         try:
-            # For SQLite, we need to check the sqlite_master table
             with self.SqlSession() as sess:
                 result = sess.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
                     {"table_name": self.table_name}).scalar()
@@ -764,24 +641,18 @@ class SqliteStorage(Storage):
             return False
 
     def create(self) -> None:
-        """
-        Create the table if it doesn't exist.
-        """
         self.table = self.get_table()
         if not self.table_exists():
             print(f"Creating table: {self.table.name}")
             try:
-                # First create the table without indexes
                 table_without_indexes = Table(self.table_name,
                     MetaData(),
                     *[c.copy() for c in self.table.columns])
                 table_without_indexes.create(self.db_engine, checkfirst=True)
-                # Then create each index individually with error handling
                 for idx in self.table.indexes:
                     try:
                         idx_name = idx.name
                         print(f"Creating index: {idx_name}")
-                        # Check if index already exists using SQLite's schema table
                         with self.SqlSession() as sess:
                             exists_query = text("SELECT 1 FROM sqlite_master WHERE type='index' AND name=:index_name")
                             exists = sess.execute(exists_query, {"index_name": idx_name}).scalar() is not None
@@ -790,21 +661,12 @@ class SqliteStorage(Storage):
                         else:
                             print(f"Index {idx_name} already exists, skipping creation")
                     except Exception as e:
-                        # Log the error but continue with other indexes
                         print(f"Error creating index {idx.name}: {e}")
             except Exception as e:
                 print(f"Error creating table: {e}")
                 raise
 
     def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
-        """
-        Read a Session from the database.
-        Args:
-            session_id (str): ID of the session to read.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
-        Returns:
-            Optional[Session]: Session object if found, None otherwise.
-        """
         try:
             with self.SqlSession() as sess:
                 stmt = select(self.table).where(self.table.c.session_id == session_id)
@@ -826,17 +688,8 @@ class SqliteStorage(Storage):
         return None
 
     def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
-        """
-        Get all session IDs, optionally filtered by user_id and/or entity_id.
-        Args:
-            user_id (Optional[str]): The ID of the user to filter by.
-            entity_id (Optional[str]): The ID of the agent / workflow to filter by.
-        Returns:
-            List[str]: List of session IDs matching the criteria.
-        """
         try:
             with self.SqlSession() as sess, sess.begin():
-                # get all session_ids
                 stmt = select(self.table.c.session_id)
                 if user_id is not None:
                     stmt = stmt.where(self.table.c.user_id == user_id)
@@ -847,9 +700,7 @@ class SqliteStorage(Storage):
                         stmt = stmt.where(self.table.c.team_id == entity_id)
                     elif self.mode == "workflow":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
-                # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
-                # execute query
                 rows = sess.execute(stmt).fetchall()
                 return [row[0] for row in rows] if rows is not None else []
         except Exception as e:
@@ -861,17 +712,8 @@ class SqliteStorage(Storage):
         return []
 
     def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
-        """
-        Get all sessions, optionally filtered by user_id and/or entity_id.
-        Args:
-            user_id (Optional[str]): The ID of the user to filter by.
-            entity_id (Optional[str]): The ID of the agent / workflow to filter by.
-        Returns:
-            List[Session]: List of Session objects matching the criteria.
-        """
         try:
             with self.SqlSession() as sess, sess.begin():
-                # get all sessions
                 stmt = select(self.table)
                 if user_id is not None:
                     stmt = stmt.where(self.table.c.user_id == user_id)
@@ -882,9 +724,7 @@ class SqliteStorage(Storage):
                         stmt = stmt.where(self.table.c.team_id == entity_id)
                     elif self.mode == "workflow":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
-                # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
-                # execute query
                 rows = sess.execute(stmt).fetchall()
                 if rows is not None:
                     if self.mode == "agent":
@@ -904,17 +744,12 @@ class SqliteStorage(Storage):
         return []
 
     def upgrade_schema(self) -> None:
-        """
-        Upgrade the schema of the storage table.
-        Currently handles adding the team_session_id column for agent mode.
-        """
         if not self.auto_upgrade_schema:
             print("Auto schema upgrade disabled. Skipping upgrade.")
             return
         try:
             if self.mode == "agent" and self.table_exists():
                 with self.SqlSession() as sess:
-                    # Check if team_session_id column exists using SQLite PRAGMA
                     column_exists_query = text(f"PRAGMA table_info({self.table_name})")
                     columns = sess.execute(column_exists_query).fetchall()
                     column_exists = any(col[1] == "team_session_id" for col in columns)
@@ -930,21 +765,11 @@ class SqliteStorage(Storage):
             raise
 
     def upsert(self, session: Session, create_and_retry: bool = True) -> Optional[Session]:
-        """
-        Insert or update a Session in the database.
-        Args:
-            session (Session): The session data to upsert.
-            create_and_retry (bool): Retry upsert if table does not exist.
-        Returns:
-            Optional[Session]: The upserted Session, or None if operation failed.
-        """
-        # Perform schema upgrade if auto_upgrade_schema is enabled
         if self.auto_upgrade_schema and not self._schema_up_to_date:
             self.upgrade_schema()
         try:
             with self.SqlSession() as sess, sess.begin():
                 if self.mode == "agent":
-                    # Create an insert statement
                     stmt = sqlite.insert(self.table).values(session_id=session.session_id,
                         agent_id=session.agent_id,
                         team_session_id=session.team_session_id,
@@ -953,8 +778,6 @@ class SqliteStorage(Storage):
                         agent_data=session.agent_data,
                         session_data=session.session_data,
                         extra_data=session.extra_data)
-                    # Define the upsert if the session_id already exists
-                    # See: https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#insert-on-conflict-upsert
                     stmt = stmt.on_conflict_do_update(index_elements=["session_id"],
                         set_=dict(agent_id=session.agent_id,
                             team_session_id=session.team_session_id,
@@ -963,9 +786,8 @@ class SqliteStorage(Storage):
                             agent_data=session.agent_data,
                             session_data=session.session_data,
                             extra_data=session.extra_data,
-                            updated_at=int(time.time())),  # The updated value for each column)
+                            updated_at=int(time.time())))
                 elif self.mode == "team":
-                    # Create an insert statement
                     stmt = sqlite.insert(self.table).values(session_id=session.session_id,
                         team_id=session.team_id,
                         user_id=session.user_id,
@@ -974,8 +796,6 @@ class SqliteStorage(Storage):
                         team_data=session.team_data,
                         session_data=session.session_data,
                         extra_data=session.extra_data)
-                    # Define the upsert if the session_id already exists
-                    # See: https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#insert-on-conflict-upsert
                     stmt = stmt.on_conflict_do_update(index_elements=["session_id"],
                         set_=dict(team_id=session.team_id,
                             user_id=session.user_id,
@@ -984,9 +804,8 @@ class SqliteStorage(Storage):
                             team_data=session.team_data,
                             session_data=session.session_data,
                             extra_data=session.extra_data,
-                            updated_at=int(time.time())),  # The updated value for each column)
+                            updated_at=int(time.time())))
                 elif self.mode == "workflow":
-                    # Create an insert statement
                     stmt = sqlite.insert(self.table).values(session_id=session.session_id,
                         workflow_id=session.workflow_id,
                         user_id=session.user_id,
@@ -994,8 +813,6 @@ class SqliteStorage(Storage):
                         workflow_data=session.workflow_data,
                         session_data=session.session_data,
                         extra_data=session.extra_data)
-                    # Define the upsert if the session_id already exists
-                    # See: https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#insert-on-conflict-upsert
                     stmt = stmt.on_conflict_do_update(index_elements=["session_id"],
                         set_=dict(workflow_id=session.workflow_id,
                             user_id=session.user_id,
@@ -1003,7 +820,7 @@ class SqliteStorage(Storage):
                             workflow_data=session.workflow_data,
                             session_data=session.session_data,
                             extra_data=session.extra_data,
-                            updated_at=int(time.time())),  # The updated value for each column)
+                            updated_at=int(time.time())))
                 sess.execute(stmt)
         except Exception as e:
             if create_and_retry and not self.table_exists():
@@ -1018,19 +835,11 @@ class SqliteStorage(Storage):
         return self.read(session_id=session.session_id)
 
     def delete_session(self, session_id: Optional[str] = None):
-        """
-        Delete a workflow session from the database.
-        Args:
-            session_id (Optional[str]): The ID of the session to delete.
-        Raises:
-            ValueError: If session_id is not provided.
-        """
         if session_id is None:
             print("No session_id provided for deletion.")
             return
         try:
             with self.SqlSession() as sess, sess.begin():
-                # Delete the session with the given session_id
                 delete_stmt = self.table.delete().where(self.table.c.session_id == session_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
@@ -1041,47 +850,31 @@ class SqliteStorage(Storage):
             print(f"Error deleting session: {e}")
 
     def drop(self) -> None:
-        """
-        Drop the table from the database if it exists.
-        """
         if self.table_exists():
             print(f"Deleting table: {self.table_name}")
-            # Drop with checkfirst=True to avoid errors if the table doesn't exist
             self.table.drop(self.db_engine, checkfirst=True)
-            # Clear metadata to ensure indexes are recreated properly
             self.metadata = MetaData()
             self.table = self.get_table()
 
     def __deepcopy__(self, memo):
-        """
-        Create a deep copy of the SqliteAgentStorage instance, handling unpickleable attributes.
-        Args:
-            memo (dict): A dictionary of objects already copied during the current copying pass.
-        Returns:
-            SqliteStorage: A deep-copied instance of SqliteAgentStorage.
-        """
         from copy import deepcopy
-        # Create a new instance without calling __init__
         cls = self.__class__
         copied_obj = cls.__new__(cls)
         memo[id(self)] = copied_obj
-        # Deep copy attributes
         for k, v in self.__dict__.items():
             if k in {"metadata", "table", "inspector"}:
                 continue
-            # Reuse db_engine and Session without copying
             elif k in {"db_engine", "SqlSession"}:
                 setattr(copied_obj, k, v)
             else:
                 setattr(copied_obj, k, deepcopy(v, memo))
-        # Recreate metadata and table for the copied instance
         copied_obj.metadata = MetaData()
         copied_obj.inspector = inspect(copied_obj.db_engine)
         copied_obj.table = copied_obj.get_table()
         return copied_obj
 
-class JsonStorage(Storage):
 
+class JsonStorage(Storage):
     def __init__(self, dir_path: Union[str, Path], mode: Optional[Literal["agent", "team", "workflow"]] = "agent"):
         super().__init__(mode)
         self.dir_path = Path(dir_path)
@@ -1094,12 +887,10 @@ class JsonStorage(Storage):
         return json.loads(data)
 
     def create(self) -> None:
-        """Create the storage if it doesn't exist."""
         if not self.dir_path.exists():
             self.dir_path.mkdir(parents=True, exist_ok=True)
 
     def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
-        """Read an AgentSession from storage."""
         try:
             with open(self.dir_path / f"{session_id}.json", "r", encoding="utf-8") as f:
                 data = self.deserialize(f.read())
@@ -1115,7 +906,6 @@ class JsonStorage(Storage):
             return None
 
     def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
-        """Get all session IDs, optionally filtered by user_id and/or entity_id."""
         session_ids = []
         for file in self.dir_path.glob("*.json"):
             with open(file, "r", encoding="utf-8") as f:
@@ -1126,7 +916,7 @@ class JsonStorage(Storage):
                             session_ids.append(data["session_id"])
                         elif self.mode == "team" and data["team_id"] == entity_id and data["user_id"] == user_id:
                             session_ids.append(data["session_id"])
-                        elif (self.mode == "workflow" and data["workflow_id"] == entity_id and data["user_id"] == user_id):
+                        elif self.mode == "workflow" and data["workflow_id"] == entity_id and data["user_id"] == user_id:
                             session_ids.append(data["session_id"])
                     elif user_id and data["user_id"] == user_id:
                         session_ids.append(data["session_id"])
@@ -1138,12 +928,10 @@ class JsonStorage(Storage):
                         elif self.mode == "workflow" and data["workflow_id"] == entity_id:
                             session_ids.append(data["session_id"])
                 else:
-                    # No filters applied, add all session_ids
                     session_ids.append(data["session_id"])
         return session_ids
 
     def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
-        """Get all sessions, optionally filtered by user_id and/or entity_id."""
         sessions: List[Session] = []
         for file in self.dir_path.glob("*.json"):
             with open(file, "r", encoding="utf-8") as f:
@@ -1155,7 +943,7 @@ class JsonStorage(Storage):
                             _session = AgentSession.from_dict(data)
                         elif self.mode == "team" and data["team_id"] == entity_id and data["user_id"] == user_id:
                             _session = TeamSession.from_dict(data)
-                        elif (self.mode == "workflow" and data["workflow_id"] == entity_id and data["user_id"] == user_id):
+                        elif self.mode == "workflow" and data["workflow_id"] == entity_id and data["user_id"] == user_id:
                             _session = WorkflowSession.from_dict(data)
                     elif user_id and data["user_id"] == user_id:
                         if self.mode == "agent":
@@ -1174,7 +962,6 @@ class JsonStorage(Storage):
                     if _session:
                         sessions.append(_session)
                 else:
-                    # No filters applied, add all sessions
                     if self.mode == "agent":
                         _session = AgentSession.from_dict(data)
                     elif self.mode == "team":
@@ -1186,7 +973,6 @@ class JsonStorage(Storage):
         return sessions
 
     def upsert(self, session: Session) -> Optional[Session]:
-        """Insert or update a Session in storage."""
         try:
             data = asdict(session)
             data["updated_at"] = int(time.time())
@@ -1200,7 +986,6 @@ class JsonStorage(Storage):
             return None
 
     def delete_session(self, session_id: Optional[str] = None):
-        """Delete a session from storage."""
         if session_id is None:
             return
         try:
@@ -1209,10 +994,8 @@ class JsonStorage(Storage):
             print(f"Error deleting session: {e}")
 
     def drop(self) -> None:
-        """Drop all sessions from storage."""
         for file in self.dir_path.glob("*.json"):
             file.unlink()
 
     def upgrade_schema(self) -> None:
-        """Upgrade the schema of the storage."""
         pass

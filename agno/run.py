@@ -5,24 +5,16 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models import Citations, Message, MessageReferences
-from agno.models import Message
+
 
 @dataclass
 class RunMessages:
-    """Container for messages used in an Agent run.
-    Attributes:
-        messages: List of all messages to send to the model
-        system_message: The system message for this run
-        user_message: The user message for this run
-        extra_messages: Extra messages added after the system and user messages
-    """
     messages: List[Message] = field(default_factory=list)
     system_message: Optional[Message] = None
     user_message: Optional[Message] = None
     extra_messages: Optional[List[Message]] = None
 
     def get_input_messages(self) -> List[Message]:
-        """Get the input messages for the model."""
         input_messages = []
         if self.system_message is not None:
             input_messages.append(self.system_message)
@@ -31,6 +23,7 @@ class RunMessages:
         if self.extra_messages is not None:
             input_messages.extend(self.extra_messages)
         return input_messages
+
 
 class RunEvent(str, Enum):
     """Events that can be sent by the run() functions"""
@@ -47,6 +40,7 @@ class RunEvent(str, Enum):
     updating_memory = "UpdatingMemory"
     workflow_started = "WorkflowStarted"
     workflow_completed = "WorkflowCompleted"
+
 
 @dataclass
 class RunResponseExtraData:
@@ -67,9 +61,11 @@ class RunResponseExtraData:
         if self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
         return _dict
-    @classmethod
 
+    @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponseExtraData":
+
+        from agno.reasoning import ReasoningStep
         add_messages = data.pop("add_messages", None)
         add_messages = [Message.model_validate(message) for message in add_messages] if add_messages else None
         history = data.pop("history", None)
@@ -84,6 +80,7 @@ class RunResponseExtraData:
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references)
+
 
 @dataclass
 class RunResponse:
@@ -101,10 +98,10 @@ class RunResponse:
     workflow_id: Optional[str] = None
     tools: Optional[List[Dict[str, Any]]] = None
     formatted_tool_calls: Optional[List[str]] = None
-    images: Optional[List[ImageArtifact]] = None  # Images attached to the response
-    videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
-    audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
-    response_audio: Optional[AudioResponse] = None  # Model audio response
+    images: Optional[List[ImageArtifact]] = None
+    videos: Optional[List[VideoArtifact]] = None
+    audio: Optional[List[AudioArtifact]] = None
+    response_audio: Optional[AudioResponse] = None
     citations: Optional[Citations] = None
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
@@ -135,8 +132,8 @@ class RunResponse:
         import json
         _dict = self.to_dict()
         return json.dumps(_dict, indent=2)
-    @classmethod
 
+    @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
@@ -152,9 +149,9 @@ class RunResponse:
         else:
             return json.dumps(self.content, **kwargs)
 
+
 @dataclass
 class TeamRunResponse:
-    """Response returned by Team.run() functions"""
     event: str = RunEvent.run_response.value
     content: Optional[Any] = None
     content_type: str = "str"
@@ -168,10 +165,10 @@ class TeamRunResponse:
     session_id: Optional[str] = None
     tools: Optional[List[Dict[str, Any]]] = None
     formatted_tool_calls: Optional[List[str]] = None
-    images: Optional[List[ImageArtifact]] = None  # Images from member runs
-    videos: Optional[List[VideoArtifact]] = None  # Videos from member runs
-    audio: Optional[List[AudioArtifact]] = None  # Audio from member runs
-    response_audio: Optional[AudioResponse] = None  # Model audio response
+    images: Optional[List[ImageArtifact]] = None
+    videos: Optional[List[VideoArtifact]] = None
+    audio: Optional[List[AudioArtifact]] = None
+    response_audio: Optional[AudioResponse] = None
     citations: Optional[Citations] = None
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
@@ -204,8 +201,8 @@ class TeamRunResponse:
         import json
         _dict = self.to_dict()
         return json.dumps(_dict, indent=2)
-    @classmethod
 
+    @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRunResponse":
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
