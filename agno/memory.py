@@ -24,11 +24,7 @@ class AgentRun(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def to_dict(self) -> Dict[str, Any]:
-        response = {
-            "message": self.message.to_dict() if self.message else None,
-            "messages": [message.to_dict() for message in self.messages] if self.messages else None,
-            "response": self.response.to_dict() if self.response else None,
-        }
+        response = {'message': self.message.to_dict() if self.message else None, 'messages': [message.to_dict() for message in self.messages] if self.messages else None, 'response': self.response.to_dict() if self.response else None}
         return {k: v for k, v in response.items() if v is not None}
 
 
@@ -41,19 +37,19 @@ class MemoryRow(BaseModel):
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 
     def serializable_dict(self) -> Dict[str, Any]:
-        _dict = self.model_dump(exclude={"created_at", "updated_at"})
-        _dict["created_at"] = self.created_at.isoformat() if self.created_at else None
-        _dict["updated_at"] = self.updated_at.isoformat() if self.updated_at else None
+        _dict = self.model_dump(exclude={'created_at', 'updated_at'})
+        _dict['created_at'] = self.created_at.isoformat() if self.created_at else None
+        _dict['updated_at'] = self.updated_at.isoformat() if self.updated_at else None
         return _dict
 
     def to_dict(self) -> Dict[str, Any]:
         return self.serializable_dict()
 
-    @model_validator(mode="after")
-    def generate_id(self) -> "MemoryRow":
+    @model_validator(mode='after')
+    def generate_id(self) -> 'MemoryRow':
         if self.id is None:
             memory_str = json.dumps(self.memory, sort_keys=True)
-            cleaned_memory = memory_str.replace(" ", "").replace("\n", "").replace("\t", "")
+            cleaned_memory = memory_str.replace(' ', '').replace('\n', '').replace('\t', '')
             self.id = md5(cleaned_memory.encode()).hexdigest()
         return self
 
@@ -93,22 +89,18 @@ class MemoryDb(ABC):
 
 
 class SqliteMemoryDb(MemoryDb):
-    def __init__(self,
-        table_name: str = "memory",
-        db_url: Optional[str] = None,
-        db_file: Optional[str] = None,
-        db_engine: Optional[Engine] = None):
+    def __init__(self, table_name: str = 'memory', db_url: Optional[str] = None, db_file: Optional[str] = None, db_engine: Optional[Engine] = None):
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
             _engine = create_engine(db_url)
         elif _engine is None and db_file is not None:
             db_path = Path(db_file).resolve()
             db_path.parent.mkdir(parents=True, exist_ok=True)
-            _engine = create_engine(f"sqlite:///{db_path}")
+            _engine = create_engine(f'sqlite:///{db_path}')
         else:
-            _engine = create_engine("sqlite://")
+            _engine = create_engine('sqlite://')
         if _engine is None:
-            raise ValueError("Must provide either db_url, db_file or db_engine")
+            raise ValueError('Must provide either db_url, db_file or db_engine')
         self.table_name: str = table_name
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = _engine
@@ -118,22 +110,15 @@ class SqliteMemoryDb(MemoryDb):
         self.table: Table = self.get_table()
 
     def get_table(self) -> Table:
-        return Table(self.table_name,
-            self.metadata,
-            Column("id", String, primary_key=True),
-            Column("user_id", String),
-            Column("memory", String),
-            Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
-            Column("updated_at", DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")),
-            extend_existing=True)
+        return Table(self.table_name, self.metadata, Column('id', String, primary_key=True), Column('user_id', String), Column('memory', String), Column('created_at', DateTime, server_default=text('CURRENT_TIMESTAMP')), Column('updated_at', DateTime, server_default=text('CURRENT_TIMESTAMP'), onupdate=text('CURRENT_TIMESTAMP')), extend_existing=True)
 
     def create(self) -> None:
         if not self.table_exists():
             try:
-                print(f"Creating table: {self.table_name}")
+                print(f'Creating table: {self.table_name}')
                 self.table.create(self.db_engine, checkfirst=True)
             except Exception as e:
-                print(f"Error creating table '{self.table_name}': {e}")
+                print(f'Error creating table "{self.table_name}": {e}')
                 raise
 
     def memory_exists(self, memory: MemoryRow) -> bool:
@@ -149,7 +134,7 @@ class SqliteMemoryDb(MemoryDb):
                 stmt = select(self.table)
                 if user_id is not None:
                     stmt = stmt.where(self.table.c.user_id == user_id)
-                if sort == "asc":
+                if sort == 'asc':
                     stmt = stmt.order_by(self.table.c.created_at.asc())
                 else:
                     stmt = stmt.order_by(self.table.c.created_at.desc())
@@ -159,9 +144,9 @@ class SqliteMemoryDb(MemoryDb):
                 for row in result:
                     memories.append(MemoryRow(id=row.id, user_id=row.user_id, memory=eval(row.memory)))
         except SQLAlchemyError as e:
-            print(f"Exception reading from table: {e}")
-            print(f"Table does not exist: {self.table_name}")
-            print("Creating table for future transactions")
+            print(f'Exception reading from table: {e}')
+            print(f'Table does not exist: {self.table_name}')
+            print('Creating table for future transactions')
             self.create()
         return memories
 
@@ -172,16 +157,16 @@ class SqliteMemoryDb(MemoryDb):
                 if existing:
                     stmt = (self.table.update()
                         .where(self.table.c.id == memory.id)
-                        .values(user_id=memory.user_id, memory=str(memory.memory), updated_at=text("CURRENT_TIMESTAMP")))
+                        .values(user_id=memory.user_id, memory=str(memory.memory), updated_at=text('CURRENT_TIMESTAMP')))
                 else:
                     stmt = self.table.insert().values(id=memory.id, user_id=memory.user_id, memory=str(memory.memory))
                 session.execute(stmt)
                 session.commit()
         except SQLAlchemyError as e:
-            print(f"Exception upserting into table: {e}")
+            print(f'Exception upserting into table: {e}')
             if not self.table_exists():
-                print(f"Table does not exist: {self.table_name}")
-                print("Creating table for future transactions")
+                print(f'Table does not exist: {self.table_name}')
+                print('Creating table for future transactions')
                 self.create()
                 if create_and_retry:
                     return self.upsert_memory(memory, create_and_retry=False)
@@ -196,11 +181,11 @@ class SqliteMemoryDb(MemoryDb):
 
     def drop_table(self) -> None:
         if self.table_exists():
-            print(f"Deleting table: {self.table_name}")
+            print(f'Deleting table: {self.table_name}')
             self.table.drop(self.db_engine)
 
     def table_exists(self) -> bool:
-        print(f"Checking if table exists: {self.table.name}")
+        print(f'Checking if table exists: {self.table.name}')
         try:
             return self.inspector.has_table(self.table.name)
         except Exception as e:
@@ -235,7 +220,7 @@ class MemoryManager(BaseModel):
                 from agno.ollama import Ollama
             except ModuleNotFoundError as e:
                 print(e)
-                print("Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`.")
+                print('Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`.')
                 exit(1)
             self.model = Ollama()
         self.add_tools_to_model(model=self.model)
@@ -246,20 +231,16 @@ class MemoryManager(BaseModel):
         if self._functions_for_model is None:
             self._functions_for_model = {}
         for tool in [
-            self.add_memory,
-            self.update_memory,
-            self.delete_memory,
-            self.clear_memory,
-        ]:
+            self.add_memory, self.update_memory, self.delete_memory, self.clear_memory, ]:
             try:
                 function_name = tool.__name__
                 if function_name not in self._functions_for_model:
                     func = Function.from_callable(tool)
                     self._functions_for_model[func.name] = func
-                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                    print(f"Included function {func.name}")
+                    self._tools_for_model.append({'type': 'function', 'function': func.to_dict()})
+                    print(f'Included function {func.name}')
             except Exception as e:
-                print(f"Could not add function {tool}: {e}")
+                print(f'Could not add function {tool}: {e}')
         model.set_tools(tools=self._tools_for_model)
         model.set_functions(functions=self._functions_for_model)
 
@@ -272,37 +253,37 @@ class MemoryManager(BaseModel):
         try:
             if self.db:
                 self.db.upsert_memory(MemoryRow(user_id=self.user_id, memory=Memory(memory=memory, input=self.input_message).to_dict()))
-            return "Memory added successfully"
+            return 'Memory added successfully'
         except Exception as e:
-            print(f"Error storing memory in db: {e}")
-            return f"Error adding memory: {e}"
+            print(f'Error storing memory in db: {e}')
+            return f'Error adding memory: {e}'
 
     def delete_memory(self, id: str) -> str:
         try:
             if self.db:
                 self.db.delete_memory(id=id)
-            return "Memory deleted successfully"
+            return 'Memory deleted successfully'
         except Exception as e:
-            print(f"Error deleting memory in db: {e}")
-            return f"Error deleting memory: {e}"
+            print(f'Error deleting memory in db: {e}')
+            return f'Error deleting memory: {e}'
 
     def update_memory(self, id: str, memory: str) -> str:
         try:
             if self.db:
                 self.db.upsert_memory(MemoryRow(id=id, user_id=self.user_id, memory=Memory(memory=memory, input=self.input_message).to_dict()))
-            return "Memory updated successfully"
+            return 'Memory updated successfully'
         except Exception as e:
-            print(f"Error updating memory in db: {e}")
-            return f"Error updating memory: {e}"
+            print(f'Error updating memory in db: {e}')
+            return f'Error updating memory: {e}'
 
     def clear_memory(self) -> str:
         try:
             if self.db:
                 self.db.clear()
-            return "Memory cleared successfully"
+            return 'Memory cleared successfully'
         except Exception as e:
-            print(f"Error clearing memory in db: {e}")
-            return f"Error clearing memory: {e}"
+            print(f'Error clearing memory in db: {e}')
+            return f'Error clearing memory: {e}'
 
     def get_system_message(self) -> Message:
         system_prompt_lines = [
@@ -315,52 +296,45 @@ class MemoryManager(BaseModel):
         existing_memories = self.get_existing_memories()
         if existing_memories and len(existing_memories) > 0:
             system_prompt_lines.extend([
-                    "\nExisting memories:",
-                    "<existing_memories>\n"
-                    + "\n".join([f"  - id: {m.id} | memory: {m.memory}" for m in existing_memories])
-                    + "\n</existing_memories>",
-                ])
-        return Message(role="system", content="\n".join(system_prompt_lines))
+                    '\nExisting memories:', '<existing_memories>\n'
+                    + '\n'.join([f'  - id: {m.id} | memory: {m.memory}' for m in existing_memories])
+                    + '\n</existing_memories>', ])
+        return Message(role='system', content='\n'.join(system_prompt_lines))
 
-    def run(self,
-        message: Optional[str] = None,
-        **kwargs: Any) -> Optional[str]:
-        print("*********** MemoryManager Start ***********")
+    def run(self, message: Optional[str] = None, **kwargs: Any) -> Optional[str]:
+        print('*********** MemoryManager Start ***********')
         self.update_model()
         messages_for_model: List[Message] = [self.get_system_message()]
-        user_prompt_message = Message(role="user", content=message, **kwargs) if message else None
+        user_prompt_message = Message(role='user', content=message, **kwargs) if message else None
         if user_prompt_message is not None:
             messages_for_model += [user_prompt_message]
         self.input_message = message
         self.model = cast(Model, self.model)
         response = self.model.response(messages=messages_for_model)
-        print("*********** MemoryManager End ***********")
+        print('*********** MemoryManager End ***********')
         return response.content
 
-    async def arun(self,
-        message: Optional[str] = None,
-        **kwargs: Any) -> Optional[str]:
-        print("*********** Async MemoryManager Start ***********")
+    async def arun(self, message: Optional[str] = None, **kwargs: Any) -> Optional[str]:
+        print('*********** Async MemoryManager Start ***********')
         self.update_model()
         messages_for_model: List[Message] = [self.get_system_message()]
-        user_prompt_message = Message(role="user", content=message, **kwargs) if message else None
+        user_prompt_message = Message(role='user', content=message, **kwargs) if message else None
         if user_prompt_message is not None:
             messages_for_model += [user_prompt_message]
         self.input_message = message
         self.model = cast(Model, self.model)
         response = await self.model.aresponse(messages=messages_for_model)
-        print("*********** Async MemoryManager End ***********")
+        print('*********** Async MemoryManager End ***********')
         return response.content
 
 
 class MemoryRetrieval(str, Enum):
-    last_n = "last_n"
-    first_n = "first_n"
-    semantic = "semantic"
+    last_n = 'last_n'
+    first_n = 'first_n'
+    semantic = 'semantic'
 
 
 class Memory(BaseModel):
-    """Model for Agent Memories"""
     memory: str
     id: Optional[str] = None
     topic: Optional[str] = None
@@ -381,7 +355,7 @@ class MemoryClassifier(BaseModel):
                 from agno.ollama import Ollama
             except ModuleNotFoundError as e:
                 print(e)
-                print("Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`.")
+                print('Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`.')
                 exit(1)
             self.model = Ollama()
 
@@ -390,56 +364,46 @@ class MemoryClassifier(BaseModel):
             '你的任务是确定用户的消息是否包含值得记住的信息，以便将来进行对话。',
             '这包括可以个性化与用户正在进行的交互的详细信息，例如：\n- 个人事实：姓名、年龄、职业、地点、兴趣、偏好等。\n',
             '-用户分享的重大生活事件或经历\n-有关用户当前状况、挑战或目标的重要上下文\n- 用户喜欢或不喜欢什么，他们的观点、信仰、价值观等。\n',
-            '-提供对用户个性、观点或需求有价值见解的任何其他细节',
-            '你的任务是决定用户输入是否包含任何值得记住的上述信息。',
-            '如果用户输入包含任何值得记住以备将来对话的信息，请回答‘是’。',
-            '如果输入不包含任何值得保存的重要细节，请回答“否”以忽略它。',
-            '您还将收到一份现有记忆列表，以帮助您决定输入是新的还是已知的。',
-            '如果与输入匹配的内存已经存在，请使用‘否’进行响应以保持原样。',
-            '如果存在需要更新或删除的内存，请回答“是”以更新 / 删除它。',
-            '您只能回答“是”或“否”。其他任何内容都不会被视为有效的回答。'
+            '-提供对用户个性、观点或需求有价值见解的任何其他细节', '你的任务是决定用户输入是否包含任何值得记住的上述信息。',
+            '如果用户输入包含任何值得记住以备将来对话的信息，请回答‘是’。', '如果输入不包含任何值得保存的重要细节，请回答“否”以忽略它。',
+            '您还将收到一份现有记忆列表，以帮助您决定输入是新的还是已知的。', '如果与输入匹配的内存已经存在，请使用‘否’进行响应以保持原样。',
+            '如果存在需要更新或删除的内存，请回答“是”以更新 / 删除它。', '您只能回答“是”或“否”。其他任何内容都不会被视为有效的回答。'
         ]
         if self.existing_memories and len(self.existing_memories) > 0:
             system_prompt_lines.extend([
-                    "\nExisting memories:",
-                    "<existing_memories>\n"
-                    + "\n".join([f"  - {m.memory}" for m in self.existing_memories])
-                    + "\n</existing_memories>",
-                ])
-        return Message(role="system", content="\n".join(system_prompt_lines))
+                    '\nExisting memories:', '<existing_memories>\n'
+                    + '\n'.join([f'  - {m.memory}' for m in self.existing_memories])
+                    + '\n</existing_memories>'])
+        return Message(role='system', content='\n'.join(system_prompt_lines))
 
-    def run(self,
-        message: Optional[str] = None,
-        **kwargs: Any) -> Optional[str]:
-        print("*********** MemoryClassifier Start ***********")
+    def run(self, message: Optional[str] = None, **kwargs: Any) -> Optional[str]:
+        print('*********** MemoryClassifier Start ***********')
         self.update_model()
         messages_for_model: List[Message] = [self.get_system_message()]
-        user_prompt_message = Message(role="user", content=message, **kwargs) if message else None
+        user_prompt_message = Message(role='user', content=message, **kwargs) if message else None
         if user_prompt_message is not None:
             messages_for_model += [user_prompt_message]
         self.model = cast(Model, self.model)
         response = self.model.response(messages=messages_for_model)
-        print("*********** MemoryClassifier End ***********")
+        print('*********** MemoryClassifier End ***********')
         return response.content
 
-    async def arun(self,
-        message: Optional[str] = None,
-        **kwargs: Any) -> Optional[str]:
-        print("*********** Async MemoryClassifier Start ***********")
+    async def arun(self, message: Optional[str] = None, **kwargs: Any) -> Optional[str]:
+        print('*********** Async MemoryClassifier Start ***********')
         self.update_model()
         messages_for_model: List[Message] = [self.get_system_message()]
-        user_prompt_message = Message(role="user", content=message, **kwargs) if message else None
+        user_prompt_message = Message(role='user', content=message, **kwargs) if message else None
         if user_prompt_message is not None:
             messages_for_model += [user_prompt_message]
         self.model = cast(Model, self.model)
         response = await self.model.aresponse(messages=messages_for_model)
-        print("*********** Async MemoryClassifier End ***********")
+        print('*********** Async MemoryClassifier End ***********')
         return response.content
 
 
 class SessionSummary(BaseModel):
-    summary: str = Field(..., description="Summary of the session. Be concise and focus on only important information. Do not make anything up.")
-    topics: Optional[List[str]] = Field(None, description="Topics discussed in the session.")
+    summary: str = Field(..., description='会议总结。简明扼要，只关注重要信息。不要编造任何东西。')
+    topics: Optional[List[str]] = Field(None, description='会议讨论的主题')
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(exclude_none=True)
@@ -458,73 +422,64 @@ class MemorySummarizer(BaseModel):
                 from agno.ollama import Ollama
             except ModuleNotFoundError as e:
                 print(e)
-                print("Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`.")
+                print('Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`.')
                 exit(1)
             self.model = Ollama()
         if self.use_structured_outputs:
             self.model.response_format = SessionSummary
             self.model.structured_outputs = True
         else:
-            self.model.response_format = {"type": "json_object"}
+            self.model.response_format = {'type': 'json_object'}
 
     def get_system_message(self, messages_for_summarization: List[Dict[str, str]]) -> Message:
-        system_prompt = dedent("""分析用户和助手之间的以下对话，并提取以下详细信息：\n-摘要（str）：提供会议的简明摘要，重点介绍有助于未来互动的重要信息。\n-Topics（可选[List[str]]）：列出会话中讨论的主题。\n请忽略任何琐碎的信息。\n对话：""")
+        system_prompt = dedent('分析用户和助手之间的以下对话，并提取以下详细信息：\n-摘要（str）：提供会议的简明摘要，重点介绍有助于未来互动的重要信息。\n-Topics（可选[List[str]]）：列出会话中讨论的主题。\n请忽略任何琐碎的信息。\n对话：')
         conversation = []
         for message_pair in messages_for_summarization:
-            conversation.append(f"User: {message_pair['user']}")
-            if "assistant" in message_pair:
-                conversation.append(f"Assistant: {message_pair['assistant']}")
-            elif "model" in message_pair:
-                conversation.append(f"Assistant: {message_pair['model']}")
-        system_prompt += "\n".join(conversation)
+            conversation.append(f'User: {message_pair["user"]}')
+            if 'assistant' in message_pair:
+                conversation.append(f'Assistant: {message_pair["assistant"]}')
+            elif 'model' in message_pair:
+                conversation.append(f'Assistant: {message_pair["model"]}')
+        system_prompt += '\n'.join(conversation)
         if not self.use_structured_outputs:
-            system_prompt += "\n\nProvide your output as a JSON containing the following fields:"
+            system_prompt += '\n\nProvide your output as a JSON containing the following fields:'
             json_schema = SessionSummary.model_json_schema()
             response_model_properties = {}
-            json_schema_properties = json_schema.get("properties")
+            json_schema_properties = json_schema.get('properties')
             if json_schema_properties is not None:
                 for field_name, field_properties in json_schema_properties.items():
-                    formatted_field_properties = {
-                        prop_name: prop_value
+                    formatted_field_properties = {prop_name: prop_value
                         for prop_name, prop_value in field_properties.items()
-                        if prop_name != "title"
-                    }
+                        if prop_name != 'title'}
                     response_model_properties[field_name] = formatted_field_properties
             if len(response_model_properties) > 0:
-                system_prompt += "\n<json_fields>"
-                system_prompt += f"\n{json.dumps([key for key in response_model_properties.keys() if key != '$defs'])}"
-                system_prompt += "\n</json_fields>"
-                system_prompt += "\nHere are the properties for each field:"
-                system_prompt += "\n<json_field_properties>"
-                system_prompt += f"\n{json.dumps(response_model_properties, indent=2)}"
-                system_prompt += "\n</json_field_properties>"
-            system_prompt += "\nStart your response with `{` and end it with `}`."
-            system_prompt += "\nYour output will be passed to json.loads() to convert it to a Python object."
-            system_prompt += "\nMake sure it only contains valid JSON."
-        return Message(role="system", content=system_prompt)
+                system_prompt += '\n<json_fields>'
+                system_prompt += f'\n{json.dumps([key for key in response_model_properties.keys() if key != "$defs"])}'
+                system_prompt += '\n</json_fields>'
+                system_prompt += '\nHere are the properties for each field:'
+                system_prompt += '\n<json_field_properties>'
+                system_prompt += f'\n{json.dumps(response_model_properties, indent=2)}'
+                system_prompt += '\n</json_field_properties>'
+            system_prompt += '\nStart your response with `{` and end it with `}`.'
+            system_prompt += '\nYour output will be passed to json.loads() to convert it to a Python object.'
+            system_prompt += '\nMake sure it only contains valid JSON.'
+        return Message(role='system', content=system_prompt)
 
-    def run(self,
-        message_pairs: List[Tuple[Message, Message]],
-        **kwargs: Any) -> Optional[SessionSummary]:
-        print("*********** MemorySummarizer Start ***********")
+    def run(self, message_pairs: List[Tuple[Message, Message]], **kwargs: Any) -> Optional[SessionSummary]:
+        print('*********** MemorySummarizer Start ***********')
         if message_pairs is None or len(message_pairs) == 0:
-            print("No message pairs provided for summarization.")
+            print('No message pairs provided for summarization.')
             return None
         self.update_model()
         messages_for_summarization: List[Dict[str, str]] = []
         for message_pair in message_pairs:
             user_message, assistant_message = message_pair
-            messages_for_summarization.append({
-                    user_message.role: user_message.get_content_string(),
-                    assistant_message.role: assistant_message.get_content_string(),
-                })
+            messages_for_summarization.append({user_message.role: user_message.get_content_string(), assistant_message.role: assistant_message.get_content_string()})
         messages_for_model: List[Message] = [
-            self.get_system_message(messages_for_summarization),
-            Message(role="user", content="Provide the summary of the conversation."),
-        ]
+            self.get_system_message(messages_for_summarization), Message(role='user', content='Provide the summary of the conversation.'), ]
         self.model = cast(Model, self.model)
         response = self.model.response(messages=messages_for_model)
-        print("*********** MemorySummarizer End ***********")
+        print('*********** MemorySummarizer End ***********')
         if self.use_structured_outputs and response.parsed is not None and isinstance(response.parsed, SessionSummary):
             return response.parsed
         if isinstance(response.content, str):
@@ -533,39 +488,32 @@ class MemorySummarizer(BaseModel):
                 try:
                     session_summary = SessionSummary.model_validate_json(response.content)
                 except ValidationError:
-                    if response.content.startswith("```json"):
-                        response.content = response.content.replace("```json\n", "").replace("\n```", "")
+                    if response.content.startswith('```json'):
+                        response.content = response.content.replace('```json\n', '').replace('\n```', '')
                         try:
                             session_summary = SessionSummary.model_validate_json(response.content)
                         except ValidationError as exc:
-                            print(f"Failed to validate session_summary response: {exc}")
+                            print(f'Failed to validate session_summary response: {exc}')
                 return session_summary
             except Exception as e:
-                print(f"Failed to convert response to session_summary: {e}")
+                print(f'Failed to convert response to session_summary: {e}')
         return None
 
-    async def arun(self,
-        message_pairs: List[Tuple[Message, Message]],
-        **kwargs: Any) -> Optional[SessionSummary]:
-        print("*********** Async MemorySummarizer Start ***********")
+    async def arun(self, message_pairs: List[Tuple[Message, Message]], **kwargs: Any) -> Optional[SessionSummary]:
+        print('*********** Async MemorySummarizer Start ***********')
         if message_pairs is None or len(message_pairs) == 0:
-            print("No message pairs provided for summarization.")
+            print('No message pairs provided for summarization.')
             return None
         self.update_model()
         messages_for_summarization: List[Dict[str, str]] = []
         for message_pair in message_pairs:
             user_message, assistant_message = message_pair
-            messages_for_summarization.append({
-                    user_message.role: user_message.get_content_string(),
-                    assistant_message.role: assistant_message.get_content_string(),
-                })
+            messages_for_summarization.append({user_message.role: user_message.get_content_string(), assistant_message.role: assistant_message.get_content_string()})
         messages_for_model: List[Message] = [
-            self.get_system_message(messages_for_summarization),
-            Message(role="user", content="Provide the summary of the conversation."),
-        ]
+            self.get_system_message(messages_for_summarization), Message(role='user', content='Provide the summary of the conversation.'), ]
         self.model = cast(Model, self.model)
         response = await self.model.aresponse(messages=messages_for_model)
-        print("*********** Async MemorySummarizer End ***********")
+        print('*********** Async MemorySummarizer End ***********')
         if self.use_structured_outputs and response.parsed is not None and isinstance(response.parsed, SessionSummary):
             return response.parsed
         if isinstance(response.content, str):
@@ -574,15 +522,15 @@ class MemorySummarizer(BaseModel):
                 try:
                     session_summary = SessionSummary.model_validate_json(response.content)
                 except ValidationError:
-                    if response.content.startswith("```json"):
-                        response.content = response.content.replace("```json\n", "").replace("\n```", "")
+                    if response.content.startswith('```json'):
+                        response.content = response.content.replace('```json\n', '').replace('\n```', '')
                         try:
                             session_summary = SessionSummary.model_validate_json(response.content)
                         except ValidationError as exc:
-                            print(f"Failed to validate session_summary response: {exc}")
+                            print(f'Failed to validate session_summary response: {exc}')
                 return session_summary
             except Exception as e:
-                print(f"Failed to convert response to session_summary: {e}")
+                print(f'Failed to convert response to session_summary: {e}')
         return None
 
 
@@ -607,31 +555,22 @@ class AgentMemory(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def to_dict(self) -> Dict[str, Any]:
-        _memory_dict = self.model_dump(exclude_none=True,
-            include={
-                "update_system_message_on_change",
-                "create_session_summary",
-                "update_session_summary_after_run",
-                "create_user_memories",
-                "update_user_memories_after_run",
-                "user_id",
-                "num_memories",
-            })
+        _memory_dict = self.model_dump(exclude_none=True, include={'update_system_message_on_change', 'create_session_summary', 'update_session_summary_after_run', 'create_user_memories', 'update_user_memories_after_run', 'user_id', 'num_memories'})
         if self.summary is not None:
-            _memory_dict["summary"] = self.summary.to_dict()
+            _memory_dict['summary'] = self.summary.to_dict()
         if self.memories is not None:
-            _memory_dict["memories"] = [memory.to_dict() for memory in self.memories]
+            _memory_dict['memories'] = [memory.to_dict() for memory in self.memories]
         if self.messages is not None:
-            _memory_dict["messages"] = [message.to_dict() for message in self.messages]
+            _memory_dict['messages'] = [message.to_dict() for message in self.messages]
         if self.runs is not None:
-            _memory_dict["runs"] = [run.to_dict() for run in self.runs]
+            _memory_dict['runs'] = [run.to_dict() for run in self.runs]
         return _memory_dict
 
     def add_run(self, agent_run: AgentRun) -> None:
         self.runs.append(agent_run)
-        print("Added AgentRun to AgentMemory")
+        print('Added AgentRun to AgentMemory')
 
-    def add_system_message(self, message: Message, system_message_role: str = "system") -> None:
+    def add_system_message(self, message: Message, system_message_role: str = 'system') -> None:
         if len(self.messages) == 0:
             if message is not None:
                 self.messages.append(message)
@@ -639,14 +578,14 @@ class AgentMemory(BaseModel):
             system_message_index = next((i for i, m in enumerate(self.messages) if m.role == system_message_role), None)
             if system_message_index is not None:
                 if self.messages[system_message_index].content != message.content and self.update_system_message_on_change:
-                    print("Updating system message in memory with new content")
+                    print('Updating system message in memory with new content')
                     self.messages[system_message_index] = message
             else:
                 self.messages.insert(0, message)
 
     def add_messages(self, messages: List[Message]) -> None:
         self.messages.extend(messages)
-        print(f"Added {len(messages)} Messages to AgentMemory")
+        print(f'Added {len(messages)} Messages to AgentMemory')
 
     def get_messages(self) -> List[Dict[str, Any]]:
         return [message.model_dump() for message in self.messages]
@@ -662,28 +601,28 @@ class AgentMemory(BaseModel):
             for message in run.response.messages:
                 if skip_role and message.role == skip_role:
                     continue
-                if hasattr(message, "from_history") and message.from_history:
+                if hasattr(message, 'from_history') and message.from_history:
                     continue
                 messages_from_history.append(message)
-        print(f"Getting messages from previous runs: {len(messages_from_history)}")
+        print(f'Getting messages from previous runs: {len(messages_from_history)}')
         return messages_from_history
 
-    def get_message_pairs(self, user_role: str = "user", assistant_role: Optional[List[str]] = None) -> List[Tuple[Message, Message]]:
+    def get_message_pairs(self, user_role: str = 'user', assistant_role: Optional[List[str]] = None) -> List[Tuple[Message, Message]]:
         if assistant_role is None:
-            assistant_role = ["assistant", "model", "CHATBOT"]
+            assistant_role = ['assistant', 'model', 'CHATBOT']
         runs_as_message_pairs: List[Tuple[Message, Message]] = []
         for run in self.runs:
             if run.response and run.response.messages:
                 user_messages_from_run = None
                 assistant_messages_from_run = None
                 for message in run.response.messages:
-                    if hasattr(message, "from_history") and message.from_history:
+                    if hasattr(message, 'from_history') and message.from_history:
                         continue
                     if message.role == user_role:
                         user_messages_from_run = message
                         break
                 for message in run.response.messages[::-1]:
-                    if hasattr(message, "from_history") and message.from_history:
+                    if hasattr(message, 'from_history') and message.from_history:
                         continue
                     if message.role in assistant_role:
                         assistant_messages_from_run = message
@@ -707,13 +646,11 @@ class AgentMemory(BaseModel):
             return
         try:
             if self.retrieval in (MemoryRetrieval.last_n, MemoryRetrieval.first_n):
-                memory_rows = self.db.read_memories(user_id=self.user_id,
-                    limit=self.num_memories,
-                    sort="asc" if self.retrieval == MemoryRetrieval.first_n else "desc")
+                memory_rows = self.db.read_memories(user_id=self.user_id, limit=self.num_memories, sort='asc' if self.retrieval == MemoryRetrieval.first_n else 'desc')
             else:
-                raise NotImplementedError("Semantic retrieval not yet supported.")
+                raise NotImplementedError('Semantic retrieval not yet supported.')
         except Exception as e:
-            print(f"Error reading memory: {e}")
+            print(f'Error reading memory: {e}')
             return
         self.memories = []
         if memory_rows is None or len(memory_rows) == 0:
@@ -722,7 +659,7 @@ class AgentMemory(BaseModel):
             try:
                 self.memories.append(Memory.model_validate(row.memory))
             except Exception as e:
-                print(f"Error loading memory: {e}")
+                print(f'Error loading memory: {e}')
                 continue
 
     def should_update_memory(self, input: str) -> bool:
@@ -730,7 +667,7 @@ class AgentMemory(BaseModel):
             self.classifier = MemoryClassifier()
         self.classifier.existing_memories = self.memories
         classifier_response = self.classifier.run(input)
-        if classifier_response == "yes":
+        if classifier_response == 'yes':
             return True
         return False
 
@@ -739,22 +676,22 @@ class AgentMemory(BaseModel):
             self.classifier = MemoryClassifier()
         self.classifier.existing_memories = self.memories
         classifier_response = await self.classifier.arun(input)
-        if classifier_response == "yes":
+        if classifier_response == 'yes':
             return True
         return False
 
     def update_memory(self, input: str, force: bool = False) -> Optional[str]:
         if input is None or not isinstance(input, str):
-            return "Invalid message content"
+            return 'Invalid message content'
         if self.db is None:
-            print("MemoryDb not provided.")
-            return "Please provide a db to store memories"
+            print('MemoryDb not provided.')
+            return 'Please provide a db to store memories'
         self.updating_memory = True
         should_update_memory = force or self.should_update_memory(input=input)
-        print(f"Update memory: {should_update_memory}")
+        print(f'Update memory: {should_update_memory}')
         if not should_update_memory:
-            print("Memory update not required")
-            return "Memory update not required"
+            print('Memory update not required')
+            return 'Memory update not required'
         if self.manager is None:
             self.manager = MemoryManager(user_id=self.user_id, db=self.db)
         else:
@@ -767,16 +704,16 @@ class AgentMemory(BaseModel):
 
     async def aupdate_memory(self, input: str, force: bool = False) -> Optional[str]:
         if input is None or not isinstance(input, str):
-            return "Invalid message content"
+            return 'Invalid message content'
         if self.db is None:
-            print("MemoryDb not provided.")
-            return "Please provide a db to store memories"
+            print('MemoryDb not provided.')
+            return 'Please provide a db to store memories'
         self.updating_memory = True
         should_update_memory = force or await self.ashould_update_memory(input=input)
-        print(f"Async update memory: {should_update_memory}")
+        print(f'Async update memory: {should_update_memory}')
         if not should_update_memory:
-            print("Memory update not required")
-            return "Memory update not required"
+            print('Memory update not required')
+            return 'Memory update not required'
         if self.manager is None:
             self.manager = MemoryManager(user_id=self.user_id, db=self.db)
         else:
@@ -809,15 +746,15 @@ class AgentMemory(BaseModel):
         self.summary = None
         self.memories = None
 
-    def deep_copy(self) -> "AgentMemory":
+    def deep_copy(self) -> 'AgentMemory':
         from copy import deepcopy
         copied_obj = self.__class__(**self.to_dict())
         for field_name, field_value in self.__dict__.items():
-            if field_name not in ["db", "classifier", "manager", "summarizer"]:
+            if field_name not in ['db', 'classifier', 'manager', 'summarizer']:
                 try:
                     setattr(copied_obj, field_name, deepcopy(field_value))
                 except Exception as e:
-                    print(f"Failed to deepcopy field: {field_name} - {e}")
+                    print(f'Failed to deepcopy field: {field_name} - {e}')
                     setattr(copied_obj, field_name, field_value)
         copied_obj.db = self.db
         copied_obj.classifier = self.classifier
@@ -836,17 +773,13 @@ class TeamRun:
         message = self.message.to_dict() if self.message else None
         member_responses = [run.to_dict() for run in self.member_runs] if self.member_runs else None
         response = self.response.to_dict() if self.response else None
-        return {
-            "message": message,
-            "member_responses": member_responses,
-            "response": response,
-        }
+        return {'message': message, 'member_responses': member_responses, 'response': response}
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "TeamRun":
-        message = Message.model_validate(data.get("message")) if data.get("message") else None
-        member_runs = ([AgentRun.model_validate(run) for run in data.get("member_runs", [])] if data.get("member_runs") else None)
-        response = TeamRunResponse.from_dict(data.get("response", {})) if data.get("response") else None
+    def from_dict(cls, data: Dict[str, Any]) -> 'TeamRun':
+        message = Message.model_validate(data.get('message')) if data.get('message') else None
+        member_runs = ([AgentRun.model_validate(run) for run in data.get('member_runs', [])] if data.get('member_runs') else None)
+        response = TeamRunResponse.from_dict(data.get('response', {})) if data.get('response') else None
         return cls(message=message, member_runs=member_runs, response=response)
 
 
@@ -884,27 +817,21 @@ class TeamMemory:
     def to_dict(self) -> Dict[str, Any]:
         _memory_dict = {}
         for key, value in self.__dict__.items():
-            if value is not None and key in [
-                "update_system_message_on_change",
-                "create_user_memories",
-                "update_user_memories_after_run",
-                "user_id",
-                "num_memories",
-            ]:
+            if value is not None and key in ['update_system_message_on_change', 'create_user_memories', 'update_user_memories_after_run', 'user_id', 'num_memories']:
                 _memory_dict[key] = value
         if self.messages is not None:
-            _memory_dict["messages"] = [message.to_dict() for message in self.messages]
+            _memory_dict['messages'] = [message.to_dict() for message in self.messages]
         if self.memories is not None:
-            _memory_dict["memories"] = [memory.to_dict() for memory in self.memories]
+            _memory_dict['memories'] = [memory.to_dict() for memory in self.memories]
         if self.runs is not None:
-            _memory_dict["runs"] = [run.to_dict() for run in self.runs]
+            _memory_dict['runs'] = [run.to_dict() for run in self.runs]
         return _memory_dict
 
     def add_interaction_to_team_context(self, member_name: str, task: str, run_response: RunResponse) -> None:
         if self.team_context is None:
             self.team_context = TeamContext()
         self.team_context.member_interactions.append(TeamMemberInteraction(member_name=member_name, task=task, response=run_response))
-        print(f"Updated team context with member name: {member_name}")
+        print(f'Updated team context with member name: {member_name}')
 
     def set_team_context_text(self, text: str) -> None:
         if self.team_context:
@@ -914,19 +841,19 @@ class TeamMemory:
 
     def get_team_context_str(self) -> str:
         if self.team_context and self.team_context.text:
-            return f"<team context>\n{self.team_context.text}\n</team context>\n"
-        return ""
+            return f'<team context>\n{self.team_context.text}\n</team context>\n'
+        return ''
 
     def get_team_member_interactions_str(self) -> str:
-        team_member_interactions_str = ""
+        team_member_interactions_str = ''
         if self.team_context and self.team_context.member_interactions:
-            team_member_interactions_str += "<member interactions>\n"
+            team_member_interactions_str += '<member interactions>\n'
             for interaction in self.team_context.member_interactions:
-                team_member_interactions_str += f"Member: {interaction.member_name}\n"
-                team_member_interactions_str += f"Task: {interaction.task}\n"
+                team_member_interactions_str += f'Member: {interaction.member_name}\n'
+                team_member_interactions_str += f'Task: {interaction.task}\n'
                 team_member_interactions_str += f"Response: {interaction.response.to_dict().get('content', '')}\n"
-                team_member_interactions_str += "\n"
-            team_member_interactions_str += "</member interactions>\n"
+                team_member_interactions_str += '\n'
+            team_member_interactions_str += '</member interactions>\n'
         return team_member_interactions_str
 
     def get_team_context_images(self) -> List[ImageArtifact]:
@@ -954,11 +881,10 @@ class TeamMemory:
         return audio
 
     def add_team_run(self, team_run: TeamRun) -> None:
-        """Adds an TeamRun to the runs list."""
         self.runs.append(team_run)
-        print("Added TeamRun to TeamMemory")
+        print('Added TeamRun to TeamMemory')
 
-    def add_system_message(self, message: Message, system_message_role: str = "system") -> None:
+    def add_system_message(self, message: Message, system_message_role: str = 'system') -> None:
         if len(self.messages) == 0:
             if message is not None:
                 self.messages.append(message)
@@ -966,14 +892,14 @@ class TeamMemory:
             system_message_index = next((i for i, m in enumerate(self.messages) if m.role == system_message_role), None)
             if system_message_index is not None:
                 if self.messages[system_message_index].content != message.content and self.update_system_message_on_change:
-                    print("Updating system message in memory with new content")
+                    print('Updating system message in memory with new content')
                     self.messages[system_message_index] = message
             else:
                 self.messages.insert(0, message)
 
     def add_messages(self, messages: List[Message]) -> None:
         self.messages.extend(messages)
-        print(f"Added {len(messages)} Messages to TeamMemory")
+        print(f'Added {len(messages)} Messages to TeamMemory')
 
     def get_messages(self) -> List[Dict[str, Any]]:
         return [message.model_dump() for message in self.messages]
@@ -989,21 +915,21 @@ class TeamMemory:
             for message in run.response.messages:
                 if skip_role and message.role == skip_role:
                     continue
-                if hasattr(message, "from_history") and message.from_history:
+                if hasattr(message, 'from_history') and message.from_history:
                     continue
                 messages_from_history.append(message)
-        print(f"Getting messages from previous runs: {len(messages_from_history)}")
+        print(f'Getting messages from previous runs: {len(messages_from_history)}')
         return messages_from_history
 
     def get_all_messages(self) -> List[Tuple[Message, Message]]:
-        assistant_role = ["assistant", "model", "CHATBOT"]
+        assistant_role = ['assistant', 'model', 'CHATBOT']
         runs_as_message_pairs: List[Tuple[Message, Message]] = []
         for run in self.runs:
             if run.response and run.response.messages:
                 user_message_from_run = None
                 assistant_message_from_run = None
                 for message in run.response.messages:
-                    if message.role == "user":
+                    if message.role == 'user':
                         user_message_from_run = message
                         break
                 for message in run.response.messages[::-1]:
@@ -1019,11 +945,11 @@ class TeamMemory:
             return
         try:
             if self.retrieval in (MemoryRetrieval.last_n, MemoryRetrieval.first_n):
-                memory_rows = self.db.read_memories(user_id=self.user_id, limit=self.num_memories, sort="asc" if self.retrieval == MemoryRetrieval.first_n else "desc")
+                memory_rows = self.db.read_memories(user_id=self.user_id, limit=self.num_memories, sort='asc' if self.retrieval == MemoryRetrieval.first_n else 'desc')
             else:
-                raise NotImplementedError("Semantic retrieval not yet supported.")
+                raise NotImplementedError('Semantic retrieval not yet supported.')
         except Exception as e:
-            print(f"Error reading memory: {e}")
+            print(f'Error reading memory: {e}')
             return
         self.memories = []
         if memory_rows is None or len(memory_rows) == 0:
@@ -1032,7 +958,7 @@ class TeamMemory:
             try:
                 self.memories.append(Memory.model_validate(row.memory))
             except Exception as e:
-                print(f"Error loading memory: {e}")
+                print(f'Error loading memory: {e}')
                 continue
 
     def should_update_memory(self, input: str) -> bool:
@@ -1040,7 +966,7 @@ class TeamMemory:
             self.classifier = MemoryClassifier()
         self.classifier.existing_memories = self.memories
         classifier_response = self.classifier.run(input)
-        if classifier_response == "yes":
+        if classifier_response == 'yes':
             return True
         return False
 
@@ -1049,22 +975,22 @@ class TeamMemory:
             self.classifier = MemoryClassifier()
         self.classifier.existing_memories = self.memories
         classifier_response = await self.classifier.arun(input)
-        if classifier_response == "yes":
+        if classifier_response == 'yes':
             return True
         return False
 
     def update_memory(self, input: str, force: bool = False) -> Optional[str]:
         if input is None or not isinstance(input, str):
-            return "Invalid message content"
+            return 'Invalid message content'
         if self.db is None:
-            print("MemoryDb not provided.")
-            return "Please provide a db to store memories"
+            print('MemoryDb not provided.')
+            return 'Please provide a db to store memories'
         self.updating_memory = True
         should_update_memory = force or self.should_update_memory(input=input)
-        print(f"Update memory: {should_update_memory}")
+        print(f'Update memory: {should_update_memory}')
         if not should_update_memory:
-            print("Memory update not required")
-            return "Memory update not required"
+            print('Memory update not required')
+            return 'Memory update not required'
         if self.manager is None:
             self.manager = MemoryManager(user_id=self.user_id, db=self.db)
         else:
@@ -1076,18 +1002,17 @@ class TeamMemory:
         return response
 
     async def aupdate_memory(self, input: str, force: bool = False) -> Optional[str]:
-        """Creates a memory from a message and adds it to the memory db."""
         if input is None or not isinstance(input, str):
-            return "Invalid message content"
+            return 'Invalid message content'
         if self.db is None:
-            print("MemoryDb not provided.")
-            return "Please provide a db to store memories"
+            print('MemoryDb not provided.')
+            return 'Please provide a db to store memories'
         self.updating_memory = True
         should_update_memory = force or await self.ashould_update_memory(input=input)
-        print(f"Async update memory: {should_update_memory}")
+        print(f'Async update memory: {should_update_memory}')
         if not should_update_memory:
-            print("Memory update not required")
-            return "Memory update not required"
+            print('Memory update not required')
+            return 'Memory update not required'
         if self.manager is None:
             self.manager = MemoryManager(user_id=self.user_id, db=self.db)
         else:
@@ -1098,15 +1023,15 @@ class TeamMemory:
         self.updating_memory = False
         return response
 
-    def deep_copy(self) -> "TeamMemory":
+    def deep_copy(self) -> 'TeamMemory':
         from copy import deepcopy
         copied_obj = self.__class__(**self.to_dict())
         for field_name, field_value in self.__dict__.items():
-            if field_name not in ["db", "classifier", "manager"]:
+            if field_name not in ['db', 'classifier', 'manager']:
                 try:
                     setattr(copied_obj, field_name, deepcopy(field_value))
                 except Exception as e:
-                    print(f"Failed to deepcopy field: {field_name} - {e}")
+                    print(f'Failed to deepcopy field: {field_name} - {e}')
                     setattr(copied_obj, field_name, field_value)
         copied_obj.db = self.db
         copied_obj.classifier = self.classifier
@@ -1129,12 +1054,12 @@ class WorkflowMemory(BaseModel):
 
     def add_run(self, workflow_run: WorkflowRun) -> None:
         self.runs.append(workflow_run)
-        print("Added WorkflowRun to WorkflowMemory")
+        print('Added WorkflowRun to WorkflowMemory')
 
     def clear(self) -> None:
         self.runs = []
 
-    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "WorkflowMemory":
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> 'WorkflowMemory':
         new_memory = self.model_copy(deep=True, update=update)
         new_memory.clear()
         return new_memory
