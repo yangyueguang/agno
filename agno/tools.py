@@ -7,25 +7,20 @@ from pydantic import BaseModel, Field, validate_call
 from collections import OrderedDict
 from typing import Any, Callable, Dict, Optional
 
-
 T = TypeVar("T")
 F = TypeVar("F", bound=Callable[..., Any])
 ToolConfig = TypeVar("ToolConfig", bound=Dict[str, Any])
 from typing import Any, Dict, Optional, Union, get_args, get_origin
-
 from typing import List, Optional, Union
 
-
-
 class AgentRunException(Exception):
-    def __init__(
-        self,
+
+    def __init__(self,
         exc,
         user_message: str = None,
         agent_message: str = None,
         messages: Optional[List[dict]] = None,
-        stop_execution: bool = False,
-    ):
+        stop_execution: bool = False):
         super().__init__(exc)
         self.user_message = user_message
         self.agent_message = agent_message
@@ -33,18 +28,12 @@ class AgentRunException(Exception):
         self.stop_execution = stop_execution
 
 
-
-
 def is_origin_union_type(origin: Any) -> bool:
     import sys
-
     if sys.version_info.minor >= 10:
-        from types import UnionType  # type: ignore
-
+        from types import UnionType
         return origin in [Union, UnionType]
-
     return origin is Union
-
 
 def get_json_type_for_py_type(arg: str) -> str:
     """
@@ -65,10 +54,8 @@ def get_json_type_for_py_type(arg: str) -> str:
         return "array"
     elif arg in ("dict", "mapping"):
         return "object"
-
     # If the type is not recognized, return "object"
     return "object"
-
 
 def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
     # print(f"Getting JSON schema for arg: {t}")
@@ -76,7 +63,6 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
     # print(f"Type args: {type_args}")
     type_origin = get_origin(t)
     # print(f"Type origin: {type_origin}")
-
     if type_origin is not None:
         if type_origin in (list, tuple, set, frozenset):
             json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
@@ -96,45 +82,36 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
                 except Exception:
                     continue
             return {"anyOf": types} if types else None
-
     json_schema: Dict[str, Any] = {"type": get_json_type_for_py_type(t.__name__)}
     if json_schema["type"] == "object":
         json_schema["properties"] = {}
         json_schema["additionalProperties"] = False
     return json_schema
 
-
-def get_json_schema(
-    type_hints: Dict[str, Any], param_descriptions: Optional[Dict[str, str]] = None, strict: bool = False
-) -> Dict[str, Any]:
+def get_json_schema(type_hints: Dict[str, Any], param_descriptions: Optional[Dict[str, str]] = None, strict: bool = False) -> Dict[str, Any]:
     json_schema: Dict[str, Any] = {
         "type": "object",
         "properties": {},
     }
     if strict:
         json_schema["additionalProperties"] = False
-
     for k, v in type_hints.items():
         # print(f"Parsing arg: {k} | {v}")
         if k == "return":
             continue
-
         try:
             # Check if type is Optional (Union with NoneType)
             type_origin = get_origin(v)
             type_args = get_args(v)
             is_optional = type_origin is Union and len(type_args) == 2 and any(arg is type(None) for arg in type_args)
-
             # Get the actual type if it's Optional
             if is_optional:
                 v = next(arg for arg in type_args if arg is not type(None))
-
             # Handle cases with no type hint
             if v:
                 arg_json_schema = get_json_schema_for_arg(v)
             else:
                 arg_json_schema = {}
-
             if arg_json_schema is not None:
                 if is_optional:
                     # Handle null type for optional fields
@@ -145,34 +122,27 @@ def get_json_schema(
                 # Add description
                 if param_descriptions and k in param_descriptions and param_descriptions[k]:
                     arg_json_schema["description"] = param_descriptions[k]
-
                 json_schema["properties"][k] = arg_json_schema
-
             else:
                 print(f"Could not parse argument {k} of type {v}")
         except Exception as e:
             print(f"Error processing argument {k}: {str(e)}")
             continue
-
     return json_schema
-
 
 class Function(BaseModel):
     """Model for storing functions that can be called by an agent."""
-
     # The name of the function to be called.
     # Must be a-z, A-Z, 0-9, or contain underscores and dashes, with a maximum length of 64.
     name: str
     # A description of what the function does, used by the model to choose when and how to call the function.
+
     description: Optional[str] = None
     # The parameters the functions accepts, described as a JSON Schema object.
     # To describe a function that accepts no parameters, provide the value {"type": "object", "properties": {}}.
-    parameters: Dict[str, Any] = Field(
-        default_factory=lambda: {"type": "object", "properties": {}, "required": []},
-        description="JSON Schema object describing function parameters",
-    )
+    parameters: Dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}, "required": []},
+        description="JSON Schema object describing function parameters")
     strict: Optional[bool] = None
-
     # The function to be called.
     entrypoint: Optional[Callable] = None
     # If True, the entrypoint processing is skipped and the Function is used as is.
@@ -189,58 +159,46 @@ class Function(BaseModel):
     # Hook that runs after the function is executed, regardless of success/failure.
     # If defined, can accept the FunctionCall instance as a parameter.
     post_hook: Optional[Callable] = None
-
     # Caching configuration
     cache_results: bool = False
     cache_dir: Optional[str] = None
     cache_ttl: int = 3600
-
     # --*-- FOR INTERNAL USE ONLY --*--
     # The agent that the function is associated with
     _agent: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(exclude_none=True, include={"name", "description", "parameters", "strict"})
-
     @classmethod
+
     def from_callable(cls, c: Callable, strict: bool = False) -> "Function":
         from inspect import getdoc, isasyncgenfunction, signature
-
 
         function_name = c.__name__
         parameters = {"type": "object", "properties": {}, "required": []}
         try:
             sig = signature(c)
             type_hints = get_type_hints(c)
-
             # If function has an the agent argument, remove the agent parameter from the type hints
             if "agent" in sig.parameters:
                 del type_hints["agent"]
             # print(f"Type hints for {function_name}: {type_hints}")
-
             # Filter out return type and only process parameters
             param_type_hints = {
                 name: type_hints.get(name) for name in sig.parameters if name != "return" and name != "agent"
             }
-
             # Parse docstring for parameters
             param_descriptions = {}
             if docstring := getdoc(c):
                 parsed_doc = parse(docstring)
                 param_docs = parsed_doc.params
-
                 if param_docs is not None:
                     for param in param_docs:
                         param_name = param.arg_name
                         param_type = param.type_name
-
                         param_descriptions[param_name] = f"({param_type}) {param.description}"
-
             # Get JSON schema for parameters only
-            parameters = get_json_schema(
-                type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict
-            )
-
+            parameters = get_json_schema(type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict)
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
@@ -252,75 +210,57 @@ class Function(BaseModel):
                     for name, param in sig.parameters.items()
                     if param.default == param.empty and name != "self" and name != "agent"
                 ]
-
             # print(f"JSON schema for {function_name}: {parameters}")
         except Exception as e:
             print(f"Could not parse args for {function_name}: {e}", exc_info=True)
-
         # Don't wrap async generator with validate_call
         if isasyncgenfunction(c):
             entrypoint = c
         else:
-            entrypoint = validate_call(c, config=dict(arbitrary_types_allowed=True))  # type: ignore
-        return cls(
-            name=function_name,
+            entrypoint = validate_call(c, config=dict(arbitrary_types_allowed=True))
+        return cls(name=function_name,
             description=get_entrypoint_docstring(entrypoint=c),
             parameters=parameters,
-            entrypoint=entrypoint,
-        )
+            entrypoint=entrypoint)
 
     def process_entrypoint(self, strict: bool = False):
         """Process the entrypoint and make it ready for use by an agent."""
         from inspect import getdoc, isasyncgenfunction, signature
 
-
         if self.skip_entrypoint_processing:
             return
-
         if self.entrypoint is None:
             return
-
         parameters = {"type": "object", "properties": {}, "required": []}
-
         params_set_by_user = False
         # If the user set the parameters (i.e. they are different from the default), we should keep them
         if self.parameters != parameters:
             params_set_by_user = True
-
         try:
             sig = signature(self.entrypoint)
             type_hints = get_type_hints(self.entrypoint)
-
             # If function has an the agent argument, remove the agent parameter from the type hints
             if "agent" in sig.parameters:
                 del type_hints["agent"]
             # print(f"Type hints for {self.name}: {type_hints}")
-
             # Filter out return type and only process parameters
             param_type_hints = {
                 name: type_hints.get(name) for name in sig.parameters if name != "return" and name != "agent"
             }
-
             # Parse docstring for parameters
             param_descriptions = {}
             if docstring := getdoc(self.entrypoint):
                 parsed_doc = parse(docstring)
                 param_docs = parsed_doc.params
-
                 if param_docs is not None:
                     for param in param_docs:
                         param_name = param.arg_name
                         param_type = param.type_name
-
                         # TODO: We should use type hints first, then map param types in docs to json schema types.
                         # This is temporary to not lose information
                         param_descriptions[param_name] = f"({param_type}) {param.description}"
-
             # Get JSON schema for parameters only
-            parameters = get_json_schema(
-                type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict
-            )
-
+            parameters = get_json_schema(type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict)
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
@@ -332,7 +272,6 @@ class Function(BaseModel):
                     for name, param in sig.parameters.items()
                     if param.default == param.empty and name != "self" and name != "agent"
                 ]
-
             if params_set_by_user:
                 self.parameters['additionalProperties'] = False
                 if strict:
@@ -344,20 +283,17 @@ class Function(BaseModel):
                         for name, param in sig.parameters.items()
                         if param.default == param.empty and name != "self" and name != "agent"
                     ]
-
             # print(f"JSON schema for {self.name}: {parameters}")
         except Exception as e:
             print(f"Could not parse args for {self.name}: {e}", exc_info=True)
-
         self.description = self.description or get_entrypoint_docstring(self.entrypoint)
         if not params_set_by_user:
             self.parameters = parameters
-
         try:
             # Don't wrap async generator with validate_call
             if not isasyncgenfunction(self.entrypoint):
                 self.entrypoint = validate_call(self.entrypoint,
-                                                config=dict(arbitrary_types_allowed=True))  # type: ignore
+                                                config=dict(arbitrary_types_allowed=True))
         except Exception as e:
             print(f"Failed to add validate decorator to entrypoint: {e}")
 
@@ -370,16 +306,13 @@ class Function(BaseModel):
 
     def get_definition_for_prompt_dict(self) -> Optional[Dict[str, Any]]:
         """Returns a function definition that can be used in a prompt."""
-
         if self.entrypoint is None:
             return None
-
         type_hints = get_type_hints(self.entrypoint)
         return_type = type_hints.get("return", None)
         returns = None
         if return_type is not None:
             returns = self.get_type_name(return_type)
-
         function_info = {
             "name": self.name,
             "description": self.description,
@@ -391,7 +324,6 @@ class Function(BaseModel):
     def get_definition_for_prompt(self) -> Optional[str]:
         """Returns a function definition that can be used in a prompt."""
         import json
-
         function_info = self.get_definition_for_prompt_dict()
         if function_info is not None:
             return json.dumps(function_info, indent=2)
@@ -400,13 +332,11 @@ class Function(BaseModel):
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name and arguments."""
         from hashlib import md5
-
         copy_entrypoint_args = entrypoint_args.copy()
         # Remove agent from entrypoint_args
         if "agent" in copy_entrypoint_args:
             del copy_entrypoint_args["agent"]
         args_str = str(copy_entrypoint_args)
-
         kwargs_str = str(sorted((call_args or {}).items()))
         key_str = f"{self.name}:{args_str}:{kwargs_str}"
         return md5(key_str.encode()).hexdigest()
@@ -415,7 +345,6 @@ class Function(BaseModel):
         """Get the full path for the cache file."""
         from pathlib import Path
         from tempfile import gettempdir
-
         base_cache_dir = self.cache_dir or Path(gettempdir()) / "agno_cache"
         func_cache_dir = Path(base_cache_dir) / "functions" / self.name
         func_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -426,43 +355,34 @@ class Function(BaseModel):
         import json
         from pathlib import Path
         from time import time
-
         cache_path = Path(cache_file)
         if not cache_path.exists():
             return None
-
         try:
             with cache_path.open("r") as f:
                 cache_data = json.load(f)
-
             timestamp = cache_data.get("timestamp", 0)
             result = cache_data.get("result")
-
             if time() - timestamp <= self.cache_ttl:
                 return result
-
             # Remove expired entry
             cache_path.unlink()
         except Exception as e:
             print(f"Error reading cache: {e}")
-
         return None
 
     def _save_to_cache(self, cache_file: str, result: Any):
         """Save result to cache."""
         import json
         from time import time
-
         try:
             with open(cache_file, "w") as f:
                 json.dump({"timestamp": time(), "result": result}, f)
         except Exception as e:
             print(f"Error writing cache: {e}")
 
-
 class FunctionCall(BaseModel):
     """Model for Function Calls"""
-
     # The function to be called.
     function: Function
     # The arguments to call the function with.
@@ -471,34 +391,27 @@ class FunctionCall(BaseModel):
     result: Optional[Any] = None
     # The ID of the function call.
     call_id: Optional[str] = None
-
     # Error while parsing arguments or running the function.
     error: Optional[str] = None
 
     def get_call_str(self) -> str:
         """Returns a string representation of the function call."""
         import shutil
-
         # Get terminal width, default to 80 if can't determine
         term_width = shutil.get_terminal_size().columns or 80
         max_arg_len = max(20, (term_width - len(self.function.name) - 4) // 2)
-
         if self.arguments is None:
             return f"{self.function.name}()"
-
         trimmed_arguments = {}
         for k, v in self.arguments.items():
             if isinstance(v, str) and len(str(v)) > max_arg_len:
                 trimmed_arguments[k] = "..."
             else:
                 trimmed_arguments[k] = v
-
         call_str = f"{self.function.name}({', '.join([f'{k}={v}' for k, v in trimmed_arguments.items()])})"
-
         # If call string is too long, truncate arguments
         if len(call_str) > term_width:
             return f"{self.function.name}(...)"
-
         return call_str
 
     def _handle_pre_hook(self):
@@ -506,7 +419,6 @@ class FunctionCall(BaseModel):
         if self.function.pre_hook is not None:
             try:
                 from inspect import signature
-
                 pre_hook_args = {}
                 # Check if the pre-hook has and agent argument
                 if "agent" in signature(self.function.pre_hook).parameters:
@@ -528,7 +440,6 @@ class FunctionCall(BaseModel):
         if self.function.post_hook is not None:
             try:
                 from inspect import signature
-
                 post_hook_args = {}
                 # Check if the post-hook has and agent argument
                 if "agent" in signature(self.function.post_hook).parameters:
@@ -548,50 +459,41 @@ class FunctionCall(BaseModel):
     def _build_entrypoint_args(self) -> Dict[str, Any]:
         """Builds the arguments for the entrypoint."""
         from inspect import signature
-
         entrypoint_args = {}
         # Check if the entrypoint has an agent argument
-        if "agent" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "agent" in signature(self.function.entrypoint).parameters:
             entrypoint_args["agent"] = self.function._agent
         # Check if the entrypoint has an fc argument
-        if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "fc" in signature(self.function.entrypoint).parameters:
             entrypoint_args["fc"] = self
         return entrypoint_args
 
     def execute(self) -> bool:
         """Runs the function call."""
         from inspect import isgenerator
-
         if self.function.entrypoint is None:
             return False
-
         print(f"Running: {self.get_call_str()}")
         function_call_success = False
-
         # Execute pre-hook if it exists
         self._handle_pre_hook()
-
         entrypoint_args = self._build_entrypoint_args()
-
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not isgenerator(self.function.entrypoint):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
-
             if cached_result is not None:
                 print(f"Cache hit for: {self.get_call_str()}")
                 self.result = cached_result
                 function_call_success = True
                 return function_call_success
-
         # Execute function
         try:
             if self.arguments == {} or self.arguments is None:
                 result = self.function.entrypoint(**entrypoint_args)
             else:
                 result = self.function.entrypoint(**entrypoint_args, **self.arguments)
-
             # Handle generator case
             if isgenerator(result):
                 self.result = result  # Store generator directly, can't cache
@@ -602,9 +504,7 @@ class FunctionCall(BaseModel):
                     cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
-
             function_call_success = True
-
         except AgentRunException as e:
             print(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
@@ -614,18 +514,14 @@ class FunctionCall(BaseModel):
             print(e)
             self.error = str(e)
             return function_call_success
-
         # Execute post-hook if it exists
         self._handle_post_hook()
-
         return function_call_success
-
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
         if self.function.pre_hook is not None:
             try:
                 from inspect import signature
-
                 pre_hook_args = {}
                 # Check if the pre-hook has an agent argument
                 if "agent" in signature(self.function.pre_hook).parameters:
@@ -633,7 +529,6 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
-
                 await self.function.pre_hook(**pre_hook_args)
             except AgentRunException as e:
                 print(f"{e.__class__.__name__}: {e}")
@@ -642,13 +537,11 @@ class FunctionCall(BaseModel):
             except Exception as e:
                 print(f"Error in pre-hook callback: {e}")
                 print(e)
-
     async def _handle_post_hook_async(self):
         """Handles the async post-hook for the function call."""
         if self.function.post_hook is not None:
             try:
                 from inspect import signature
-
                 post_hook_args = {}
                 # Check if the post-hook has an agent argument
                 if "agent" in signature(self.function.post_hook).parameters:
@@ -656,7 +549,6 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
-
                 await self.function.post_hook(**post_hook_args)
             except AgentRunException as e:
                 print(f"{e.__class__.__name__}: {e}")
@@ -665,29 +557,21 @@ class FunctionCall(BaseModel):
             except Exception as e:
                 print(f"Error in post-hook callback: {e}")
                 print(e)
-
     async def aexecute(self) -> bool:
         """Runs the function call asynchronously."""
         from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
-
         if self.function.entrypoint is None:
             return False
-
         print(f"Running: {self.get_call_str()}")
         function_call_success = False
-
         # Execute pre-hook if it exists
         if iscoroutinefunction(self.function.pre_hook):
             await self._handle_pre_hook_async()
         else:
             self._handle_pre_hook()
-
         entrypoint_args = self._build_entrypoint_args()
-
         # Check cache if enabled and not a generator function
-        if self.function.cache_results and not (
-                isasyncgen(self.function.entrypoint) or isgenerator(self.function.entrypoint)
-        ):
+        if self.function.cache_results and not (isasyncgen(self.function.entrypoint) or isgenerator(self.function.entrypoint)):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
@@ -696,7 +580,6 @@ class FunctionCall(BaseModel):
                 self.result = cached_result
                 function_call_success = True
                 return function_call_success
-
         # Execute function
         try:
             if self.arguments == {} or self.arguments is None:
@@ -711,15 +594,12 @@ class FunctionCall(BaseModel):
                     self.result = result  # Store async generator directly
                 else:
                     self.result = await result
-
             # Only cache if not a generator
             if self.function.cache_results and not (isgenerator(self.result) or isasyncgen(self.result)):
                 cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
                 cache_file = self.function._get_cache_file_path(cache_key)
                 self.function._save_to_cache(cache_file, self.result)
-
             function_call_success = True
-
         except AgentRunException as e:
             print(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
@@ -729,24 +609,20 @@ class FunctionCall(BaseModel):
             print(e)
             self.error = str(e)
             return function_call_success
-
         # Execute post-hook if it exists
         if iscoroutinefunction(self.function.post_hook):
             await self._handle_post_hook_async()
         else:
             self._handle_post_hook()
-
         return function_call_success
-
 
 @overload
 def tool() -> Callable[[F], Function]: ...
 
-
 @overload
-def tool(
-    *,
+def tool(*,
     name: Optional[str] = None,
+
     description: Optional[str] = None,
     strict: Optional[bool] = None,
     sanitize_arguments: Optional[bool] = None,
@@ -756,17 +632,13 @@ def tool(
     post_hook: Optional[Callable] = None,
     cache_results: bool = False,
     cache_dir: Optional[str] = None,
-    cache_ttl: int = 3600,
-) -> Callable[[F], Function]: ...
-
+    cache_ttl: int = 3600) -> Callable[[F], Function]: ...
 
 @overload
 def tool(func: F) -> Function: ...
 
-
 def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
     """Decorator to convert a function into a Function that can be used by an agent.
-
     Args:
         name: Optional[str] - Override for the function name
         description: Optional[str] - Override for the function description
@@ -779,26 +651,21 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         cache_results: bool - If True, enable caching of function results
         cache_dir: Optional[str] - Directory to store cache files
         cache_ttl: int - Time-to-live for cached results in seconds
-
     Returns:
         Union[Function, Callable[[F], Function]]: Decorated function or decorator
-
     Examples:
         @tool
         def my_function():
             pass
-
         @tool(name="custom_name", description="Custom description")
         def another_function():
             pass
-
         @tool
         async def my_async_function():
             pass
     """
     # Move valid kwargs to a frozen set at module level
-    VALID_KWARGS = frozenset(
-        {
+    VALID_KWARGS = frozenset({
             "name",
             "description",
             "strict",
@@ -810,52 +677,38 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "cache_results",
             "cache_dir",
             "cache_ttl",
-        }
-    )
-
+        })
     # Improve error message with more context
     invalid_kwargs = set(kwargs.keys()) - VALID_KWARGS
     if invalid_kwargs:
-        raise ValueError(
-            f"Invalid tool configuration arguments: {invalid_kwargs}. Valid arguments are: {sorted(VALID_KWARGS)}"
-        )
+        raise ValueError(f"Invalid tool configuration arguments: {invalid_kwargs}. Valid arguments are: {sorted(VALID_KWARGS)}")
 
     def decorator(func: F) -> Function:
         from inspect import getdoc, isasyncgenfunction, iscoroutine, iscoroutinefunction
-
         @wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                print(
-                    f"Error in tool {func.__name__!r}: {e!r}",
-                    exc_info=True,
-                )
+                print(f"Error in tool {func.__name__!r}: {e!r}",
+                    exc_info=True)
                 raise
-
         @wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return await func(*args, **kwargs)
             except Exception as e:
-                print(
-                    f"Error in async tool {func.__name__!r}: {e!r}",
-                    exc_info=True,
-                )
+                print(f"Error in async tool {func.__name__!r}: {e!r}",
+                    exc_info=True)
                 raise
-
         @wraps(func)
         async def async_gen_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                print(
-                    f"Error in async generator tool {func.__name__!r}: {e!r}",
-                    exc_info=True,
-                )
+                print(f"Error in async generator tool {func.__name__!r}: {e!r}",
+                    exc_info=True)
                 raise
-
         # Choose appropriate wrapper based on function type
         if isasyncgenfunction(func):
             wrapper = async_gen_wrapper
@@ -863,10 +716,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             wrapper = async_wrapper
         else:
             wrapper = sync_wrapper
-
         # Preserve the original signature and metadata
         update_wrapper(wrapper, func)
-
         # Create Function instance with any provided kwargs
         tool_config = {
             "name": kwargs.get("name", func.__name__),
@@ -882,18 +733,14 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             },
         }
         return Function(**tool_config)
-
     # Handle both @tool and @tool() cases
     if len(args) == 1 and callable(args[0]) and not kwargs:
         return decorator(args[0])
-
     return decorator
-
 def get_entrypoint_docstring(entrypoint: Callable) -> str:
     from inspect import getdoc
     if isinstance(entrypoint, partial):
         return str(entrypoint)
-
     doc = getdoc(entrypoint)
     if not doc:
         return ""
@@ -905,17 +752,14 @@ def get_entrypoint_docstring(entrypoint: Callable) -> str:
         lines.extend(parsed.long_description.split("\n"))
     return "\n".join(lines)
 
-
 class Toolkit:
-    def __init__(
-        self,
+
+    def __init__(self,
         name: str = "toolkit",
         cache_results: bool = False,
         cache_ttl: int = 3600,
-        cache_dir: Optional[str] = None,
-    ):
+        cache_dir: Optional[str] = None):
         """Initialize a new Toolkit.
-
         Args:
             name: A descriptive name for the toolkit
             cache_results (bool): Enable in-memory caching of function results.
@@ -930,22 +774,18 @@ class Toolkit:
 
     def register(self, function: Callable[..., Any], sanitize_arguments: bool = True):
         """Register a function with the toolkit.
-
         Args:
             function: The callable to register
-
         Returns:
             The registered function
         """
         try:
-            f = Function(
-                name=function.__name__,
+            f = Function(name=function.__name__,
                 entrypoint=function,
                 sanitize_arguments=sanitize_arguments,
                 cache_results=self.cache_results,
                 cache_dir=self.cache_dir,
-                cache_ttl=self.cache_ttl,
-            )
+                cache_ttl=self.cache_ttl)
             self.functions[f.name] = f
             print(f"Function: {f.name} registered with {self.name}")
         except Exception as e:
@@ -961,36 +801,27 @@ class Toolkit:
     def __str__(self):
         return self.__repr__()
 
-
-
 from agno.tools import Toolkit
-
 
 try:
     from newspaper import Article
 except ImportError:
     raise ImportError("`newspaper3k` not installed. Please run `pip install newspaper3k lxml_html_clean`.")
-
 import json
 from typing import Any, Optional
-
 from agno.tools import Toolkit
-
 
 try:
     from duckduckgo_search import DDGS
 except ImportError:
     raise ImportError("`duckduckgo-search` not installed. Please install using `pip install duckduckgo-search`")
 import json
-
 from agno.tools import Toolkit
-
 
 try:
     import yfinance as yf
 except ImportError:
     raise ImportError("`yfinance` not installed. Please install using `pip install yfinance`.")
-
 
 class YFinanceTools(Toolkit):
     """
@@ -1008,8 +839,7 @@ class YFinanceTools(Toolkit):
         enable_all (bool): Whether to enable all tools.
     """
 
-    def __init__(
-        self,
+    def __init__(self,
         stock_price: bool = True,
         company_info: bool = False,
         stock_fundamentals: bool = False,
@@ -1020,10 +850,8 @@ class YFinanceTools(Toolkit):
         technical_indicators: bool = False,
         historical_prices: bool = False,
         enable_all: bool = False,
-        **kwargs,
-    ):
+        **kwargs):
         super().__init__(name="yfinance_tools", **kwargs)
-
         if stock_price or enable_all:
             self.register(self.get_current_stock_price)
         if company_info or enable_all:
@@ -1046,10 +874,8 @@ class YFinanceTools(Toolkit):
     def get_current_stock_price(self, symbol: str) -> str:
         """
         Use this function to get the current stock price for a given symbol.
-
         Args:
             symbol (str): The stock symbol.
-
         Returns:
             str: The current stock price or error message.
         """
@@ -1064,10 +890,8 @@ class YFinanceTools(Toolkit):
 
     def get_company_info(self, symbol: str) -> str:
         """Use this function to get company information and overview for a given stock symbol.
-
         Args:
             symbol (str): The stock symbol.
-
         Returns:
             str: JSON containing company profile and overview.
         """
@@ -1075,9 +899,7 @@ class YFinanceTools(Toolkit):
             company_info_full = yf.Ticker(symbol).info
             if company_info_full is None:
                 return f"Could not fetch company info for {symbol}"
-
             print(f"Fetching company info for {symbol}")
-
             company_info_cleaned = {
                 "Name": company_info_full.get("shortName"),
                 "Symbol": company_info_full.get("symbol"),
@@ -1116,14 +938,12 @@ class YFinanceTools(Toolkit):
     def get_historical_stock_prices(self, symbol: str, period: str = "1mo", interval: str = "1d") -> str:
         """
         Use this function to get the historical stock price for a given symbol.
-
         Args:
             symbol (str): The stock symbol.
             period (str): The period for which to retrieve historical prices. Defaults to "1mo".
                         Valid periods: 1d,5d,1mo,3mo,6mo,1y,2y,5y,10y,ytd,max
             interval (str): The interval between data points. Defaults to "1d".
                         Valid intervals: 1d,5d,1wk,1mo,3mo
-
         Returns:
           str: The current stock price or error message.
         """
@@ -1137,10 +957,8 @@ class YFinanceTools(Toolkit):
 
     def get_stock_fundamentals(self, symbol: str) -> str:
         """Use this function to get fundamental data for a given stock symbol yfinance API.
-
         Args:
             symbol (str): The stock symbol.
-
         Returns:
             str: A JSON string containing fundamental data or an error message.
                 Keys:
@@ -1181,10 +999,8 @@ class YFinanceTools(Toolkit):
 
     def get_income_statements(self, symbol: str) -> str:
         """Use this function to get income statements for a given stock symbol.
-
         Args:
             symbol (str): The stock symbol.
-
         Returns:
             dict: JSON containing income statements or an empty dictionary.
         """
@@ -1198,10 +1014,8 @@ class YFinanceTools(Toolkit):
 
     def get_key_financial_ratios(self, symbol: str) -> str:
         """Use this function to get key financial ratios for a given stock symbol.
-
         Args:
             symbol (str): The stock symbol.
-
         Returns:
             dict: JSON containing key financial ratios.
         """
@@ -1215,10 +1029,8 @@ class YFinanceTools(Toolkit):
 
     def get_analyst_recommendations(self, symbol: str) -> str:
         """Use this function to get analyst recommendations for a given stock symbol.
-
         Args:
             symbol (str): The stock symbol.
-
         Returns:
             str: JSON containing analyst recommendations.
         """
@@ -1232,11 +1044,9 @@ class YFinanceTools(Toolkit):
 
     def get_company_news(self, symbol: str, num_stories: int = 3) -> str:
         """Use this function to get company news and press releases for a given stock symbol.
-
         Args:
             symbol (str): The stock symbol.
             num_stories (int): The number of news stories to return. Defaults to 3.
-
         Returns:
             str: JSON containing company news and press releases.
         """
@@ -1249,12 +1059,10 @@ class YFinanceTools(Toolkit):
 
     def get_technical_indicators(self, symbol: str, period: str = "3mo") -> str:
         """Use this function to get technical indicators for a given stock symbol.
-
         Args:
             symbol (str): The stock symbol.
             period (str): The time period for which to retrieve technical indicators.
                 Valid periods: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max. Defaults to 3mo.
-
         Returns:
             str: JSON containing technical indicators.
         """
@@ -1264,7 +1072,6 @@ class YFinanceTools(Toolkit):
             return indicators.to_json(orient="index")
         except Exception as e:
             return f"Error fetching technical indicators for {symbol}: {e}"
-
 
 class DuckDuckGoTools(Toolkit):
     """
@@ -1278,11 +1085,9 @@ class DuckDuckGoTools(Toolkit):
         proxy (Optional[str]): Proxy to be used in the search request.
         proxies (Optional[Any]): A list of proxies to be used in the search request.
         timeout (Optional[int]): The maximum number of seconds to wait for a response.
-
     """
 
-    def __init__(
-        self,
+    def __init__(self,
         search: bool = True,
         news: bool = True,
         modifier: Optional[str] = None,
@@ -1292,10 +1097,8 @@ class DuckDuckGoTools(Toolkit):
         proxies: Optional[Any] = None,
         timeout: Optional[int] = 10,
         verify_ssl: bool = True,
-        **kwargs,
-    ):
+        **kwargs):
         super().__init__(name="duckduckgo", **kwargs)
-
         self.headers: Optional[Any] = headers
         self.proxy: Optional[str] = proxy
         self.proxies: Optional[Any] = proxies
@@ -1303,7 +1106,6 @@ class DuckDuckGoTools(Toolkit):
         self.fixed_max_results: Optional[int] = fixed_max_results
         self.modifier: Optional[str] = modifier
         self.verify_ssl: bool = verify_ssl
-
         if search:
             self.register(self.duckduckgo_search)
         if news:
@@ -1311,43 +1113,30 @@ class DuckDuckGoTools(Toolkit):
 
     def duckduckgo_search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search DuckDuckGo for a query.
-
         Args:
             query(str): The query to search for.
             max_results (optional, default=5): The maximum number of results to return.
-
         Returns:
             The result from DuckDuckGo.
         """
         actual_max_results = self.fixed_max_results or max_results
         search_query = f"{self.modifier} {query}" if self.modifier else query
-
         print(f"Searching DDG for: {search_query}")
-        ddgs = DDGS(
-            headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl
-        )
-
+        ddgs = DDGS(headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl)
         return json.dumps(ddgs.text(keywords=search_query, max_results=actual_max_results), indent=2)
 
     def duckduckgo_news(self, query: str, max_results: int = 5) -> str:
         """Use this function to get the latest news from DuckDuckGo.
-
         Args:
             query(str): The query to search for.
             max_results (optional, default=5): The maximum number of results to return.
-
         Returns:
             The latest news from DuckDuckGo.
         """
         actual_max_results = self.fixed_max_results or max_results
-
         print(f"Searching DDG news for: {query}")
-        ddgs = DDGS(
-            headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl
-        )
-
+        ddgs = DDGS(headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl)
         return json.dumps(ddgs.news(keywords=query, max_results=actual_max_results), indent=2)
-
 class NewspaperTools(Toolkit):
     """
     Newspaper is a tool for getting the text of an article from a URL.
@@ -1357,20 +1146,16 @@ class NewspaperTools(Toolkit):
 
     def __init__(self, get_article_text: bool = True, **kwargs):
         super().__init__(name="newspaper_toolkit", **kwargs)
-
         if get_article_text:
             self.register(self.get_article_text)
 
     def get_article_text(self, url: str) -> str:
         """Get the text of an article from a URL.
-
         Args:
             url (str): The URL of the article.
-
         Returns:
             str: The text of the article.
         """
-
         try:
             print(f"Reading news: {url}")
             article = Article(url)
