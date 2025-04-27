@@ -10,19 +10,13 @@ import aiofiles
 import asyncio
 import rapidocr_onnxruntime as rapidocr
 from io import BytesIO
-from agno.ollama import Ollama
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup, Tag
 from pypdf import PdfReader as DocumentReader
 from pypdf.errors import PdfStreamError
 from docx import Document as DocxDocument
-from urllib.parse import urlparse
-from dataclasses import dataclass, field
-from abc import ABC, abstractmethod
-from chonkie import SemanticChunker
 from typing import Any, Dict, List, Optional, Tuple, IO, Union, Set
-from agno.models import Model, Message
 from ollama import Client as OllamaClient
 
 
@@ -223,9 +217,7 @@ class CSVReader(Reader):
                 csv_reader = csv.reader(csvfile, delimiter=delimiter, quotechar=quotechar)
                 for row in csv_reader:
                     csv_content += ', '.join(row) + '\n'
-            documents = [
-                Document(name=csv_name, id=csv_name, content=csv_content)
-            ]
+            documents = [Document(name=csv_name, id=csv_name, content=csv_content)]
             if self.chunk:
                 chunked_documents = []
                 for document in documents:

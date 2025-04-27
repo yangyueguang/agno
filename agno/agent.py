@@ -21,7 +21,6 @@ from inspect import signature
 from agno.ollama import Ollama
 from uuid import uuid4
 from textwrap import dedent
-from dataclasses import dataclass, fields
 from collections import ChainMap, defaultdict, deque
 from pydantic import BaseModel, ValidationError
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Set, Type, Union, cast, overload

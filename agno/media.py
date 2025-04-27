@@ -3,7 +3,7 @@ import zlib
 import httpx
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel
 
 
 class Media(BaseModel):

@@ -2,7 +2,7 @@ from agno.reader import *
 from pathlib import Path
 from agno.vectordb import VectorDb
 from typing import AsyncIterator, Iterator, List, Union, Any, Callable, Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import NodeWithScore
 

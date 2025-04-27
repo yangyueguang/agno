@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from textwrap import dedent
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Union, AsyncIterator
 from pydantic import BaseModel

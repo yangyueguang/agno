@@ -2,7 +2,6 @@ import json
 from enum import Enum
 from time import time
 from pydantic import BaseModel, Field
-from dataclasses import dataclass
 from typing import Dict, List, Optional, Union, Any
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models import Citations, Message, MessageReferences
