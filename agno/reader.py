@@ -8,7 +8,6 @@ import json
 import httpx
 import aiofiles
 import asyncio
-import rapidocr_onnxruntime as rapidocr
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -21,22 +20,11 @@ from ollama import Client as OllamaClient
 
 
 class Embedder:
-    def __init__(self, dimensions=1536):
-        self.dimensions = dimensions
-
-    def get_embedding(self, text: str) -> List[float]:
-        raise NotImplementedError
-
-    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
-        raise NotImplementedError
-
-
-class OllamaEmbedder(Embedder):
     def __init__(self, id: str = 'llama3.1:8b', dimensions: int = 4096, host: Optional[str] = None,
                  timeout: Optional[Any] = None, options: Optional[Any] = None,
                  client_kwargs: Optional[Dict[str, Any]] = None, ollama_client: Optional[OllamaClient] = None):
-        super().__init__(dimensions)
         self.id = id
+        self.dimensions = dimensions
         self.host = host
         self.timeout = timeout
         self.options = options
@@ -173,106 +161,37 @@ class Reader:
     def chunk_document(self, document: Document) -> List[Document]:
         return self.chunking_strategy.chunk(document)
 
-    async def chunk_documents_async(self, documents: List[Document]) -> List[Document]:
-        async def _chunk_document_async(doc: Document) -> List[Document]:
-            return await asyncio.to_thread(self.chunk_document, doc)
-        chunked_lists = await asyncio.gather(*[_chunk_document_async(doc) for doc in documents])
-        return [chunk for sublist in chunked_lists for chunk in sublist]
-
-
-def fetch_with_retry(url: str, max_retries: int = 3, backoff_factor: int = 2):
-    for attempt in range(max_retries):
-        try:
-            response = httpx.get(url)
-            response.raise_for_status()
-            return response
-        except httpx.RequestError as e:
-            if attempt == max_retries - 1:
-                print(f'Failed to fetch {url} after {max_retries} attempts: {e}')
-                raise
-            wait_time = backoff_factor**attempt
-            print(f'Request failed (attempt {attempt + 1}), retrying in {wait_time} seconds...')
-            time.sleep(wait_time)
-        except httpx.HTTPStatusError as e:
-            print(f'HTTP error for {url}: {e.response.status_code} - {e.response.text}')
-            raise
-    raise httpx.RequestError(f'Failed to fetch {url} after {max_retries} attempts')
-
 
 class CSVReader(Reader):
-    def read(self, file: Union[Path, IO[Any]], delimiter: str = ',', quotechar: str = '"') -> List[Document]:
-        try:
-            if isinstance(file, Path):
-                if not file.exists():
-                    raise FileNotFoundError(f'Could not find file: {file}')
-                print(f'Reading: {file}')
-                file_content = file.open(newline='', mode='r', encoding='utf-8')
-            else:
-                print(f'Reading uploaded file: {file.name}')
-                file.seek(0)
-                file_content = io.StringIO(file.read().decode('utf-8'))
-            csv_name = Path(file.name).stem if isinstance(file, Path) else file.name.split('.')[0]
-            csv_content = ''
-            with file_content as csvfile:
-                csv_reader = csv.reader(csvfile, delimiter=delimiter, quotechar=quotechar)
-                for row in csv_reader:
-                    csv_content += ', '.join(row) + '\n'
-            documents = [Document(name=csv_name, id=csv_name, content=csv_content)]
-            if self.chunk:
-                chunked_documents = []
-                for document in documents:
-                    chunked_documents.extend(self.chunk_document(document))
-                return chunked_documents
-            return documents
-        except Exception as e:
-            print(f'Error reading: {file.name if isinstance(file, IO) else file}: {e}')
-            return []
-
-    async def async_read(self, file: Union[Path, IO[Any]], delimiter: str = ',', quotechar: str = '"', page_size: int = 1000) -> List[Document]:
-        try:
-            if isinstance(file, Path):
-                if not file.exists():
-                    raise FileNotFoundError(f'Could not find file: {file}')
-                print(f'Reading async: {file}')
-                async with aiofiles.open(file, mode='r', encoding='utf-8', newline='') as file_content:
-                    content = await file_content.read()
-                    file_content_io = io.StringIO(content)
-            else:
-                print(f'Reading uploaded file async: {file.name}')
-                file.seek(0)
-                file_content_io = io.StringIO(file.read().decode('utf-8'))
-            csv_name = Path(file.name).stem if isinstance(file, Path) else file.name.split('.')[0]
-            file_content_io.seek(0)
-            csv_reader = csv.reader(file_content_io, delimiter=delimiter, quotechar=quotechar)
-            rows = list(csv_reader)
-            total_rows = len(rows)
-            if total_rows <= 10:
-                csv_content = ' '.join(', '.join(row) for row in rows)
-                documents = [
-                    Document(name=csv_name, id=csv_name, content=csv_content)
-                ]
-            else:
-                pages = []
-                for i in range(0, total_rows, page_size):
-                    pages.append(rows[i : i + page_size])
-                async def _process_page(page_number: int, page_rows: List[List[str]]) -> Document:
-                    start_row = (page_number - 1) * page_size + 1
-                    page_content = ' '.join(', '.join(row) for row in page_rows)
-                    return Document(name=csv_name, id=f'{csv_name}_page{page_number}', meta_data={'page': page_number, 'start_row': start_row, 'rows': len(page_rows)}, content=page_content)
-                documents = await asyncio.gather(*[_process_page(page_number, page) for page_number, page in enumerate(pages, start=1)])
-            if self.chunk:
-                documents = await self.chunk_documents_async(documents)
-            return documents
-        except Exception as e:
-            print(f'Error reading async: {file.name if isinstance(file, IO) else file}: {e}')
-            return []
+    def read(self, file: str, delimiter: str = ',', quotechar: str = '"') -> List[Document]:
+        file = Path(file)
+        csv_name = Path(file.name).stem
+        with file.open(newline='', mode='r', encoding='utf-8') as csvfile:
+            csv_reader = csv.reader(csvfile, delimiter=delimiter, quotechar=quotechar)
+            documents = [Document(name=csv_name, id=csv_name, content='\n'.join([', '.join(row) for row in csv_reader]))]
+        return [i for document in documents for i in self.chunk_document(document)] if self.chunk else documents
 
 
 class CSVUrlReader(Reader):
     def read(self, url: str) -> List[Document]:
-        if not url:
-            raise ValueError('No URL provided')
-        print(f'Reading: {url}')
+        def fetch_with_retry(url: str, max_retries: int = 3, backoff_factor: int = 2):
+            for attempt in range(max_retries):
+                try:
+                    response = httpx.get(url)
+                    response.raise_for_status()
+                    return response
+                except httpx.RequestError as e:
+                    if attempt == max_retries - 1:
+                        print(f'Failed to fetch {url} after {max_retries} attempts: {e}')
+                        raise
+                    wait_time = backoff_factor ** attempt
+                    print(f'Request failed (attempt {attempt + 1}), retrying in {wait_time} seconds...')
+                    time.sleep(wait_time)
+                except httpx.HTTPStatusError as e:
+                    print(f'HTTP error for {url}: {e.response.status_code} - {e.response.text}')
+                    raise
+            raise httpx.RequestError(f'Failed to fetch {url} after {max_retries} attempts')
+
         response = fetch_with_retry(url)
         parsed_url = urlparse(url)
         filename = os.path.basename(parsed_url.path) or 'data.csv'
@@ -285,58 +204,24 @@ class CSVUrlReader(Reader):
 
 class DocxReader(Reader):
     def read(self, file: Union[Path, io.BytesIO]) -> List[Document]:
-        try:
-            if isinstance(file, Path):
-                print(f'Reading: {file}')
-                docx_document = DocxDocument(str(file))
-                doc_name = file.stem
-            else:
-                print(f'Reading uploaded file: {file.name}')
-                docx_document = DocxDocument(file)
-                doc_name = file.name.split('.')[0]
-            doc_content = '\n\n'.join([para.text for para in docx_document.paragraphs])
-            documents = [
-                Document(name=doc_name, id=doc_name, content=doc_content)
-            ]
-            if self.chunk:
-                chunked_documents = []
-                for document in documents:
-                    chunked_documents.extend(self.chunk_document(document))
-                return chunked_documents
-            return documents
-        except Exception as e:
-            print(f'Error reading file: {e}')
-            return []
-
-
-def process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
-    ocr = rapidocr.RapidOCR()
-    page_text = page.extract_text() or ''
-    images_text_list = []
-    for image_object in page.images:
-        image_data = image_object.data
-        ocr_result, elapse = ocr(image_data)
-        if ocr_result:
-            images_text_list += [item[1] for item in ocr_result]
-    images_text = '\n'.join(images_text_list)
-    content = page_text + '\n' + images_text
-    return Document(name=doc_name, id=f'{doc_name}_{page_number}', meta_data={'page': page_number}, content=content)
-
-
-async def async_process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
-    ocr = rapidocr.RapidOCR()
-    page_text = page.extract_text() or ''
-    images_text_list: List = []
-    async def process_image(image_data: bytes) -> List[str]:
-        ocr_result, _ = ocr(image_data)
-        return [item[1] for item in ocr_result] if ocr_result else []
-    image_tasks = [process_image(image.data) for image in page.images]
-    images_results = await asyncio.gather(*image_tasks)
-    for result in images_results:
-        images_text_list.extend(result)
-    images_text = '\n'.join(images_text_list)
-    content = page_text + '\n' + images_text
-    return Document(name=doc_name, id=f'{doc_name}_{page_number}', meta_data={'page': page_number}, content=content)
+        if isinstance(file, Path):
+            print(f'Reading: {file}')
+            docx_document = DocxDocument(str(file))
+            doc_name = file.stem
+        else:
+            print(f'Reading uploaded file: {file.name}')
+            docx_document = DocxDocument(file)
+            doc_name = file.name.split('.')[0]
+        doc_content = '\n\n'.join([para.text for para in docx_document.paragraphs])
+        documents = [
+            Document(name=doc_name, id=doc_name, content=doc_content)
+        ]
+        if self.chunk:
+            chunked_documents = []
+            for document in documents:
+                chunked_documents.extend(self.chunk_document(document))
+            return chunked_documents
+        return documents
 
 
 class BasePDFReader(Reader):
@@ -365,30 +250,6 @@ class PDFReader(BasePDFReader):
         documents = []
         for page_number, page in enumerate(doc_reader.pages, start=1):
             documents.append(Document(name=doc_name, id=f'{doc_name}_{page_number}', meta_data={'page': page_number}, content=page.extract_text()))
-        if self.chunk:
-            return self._build_chunked_documents(documents)
-        return documents
-
-    async def async_read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
-        try:
-            if isinstance(pdf, str):
-                doc_name = pdf.split('/')[-1].split('.')[0].replace(' ', '_')
-            else:
-                doc_name = pdf.name.split('.')[0]
-        except Exception:
-            doc_name = 'pdf'
-        print(f'Reading: {doc_name}')
-        try:
-            doc_reader = DocumentReader(pdf)
-        except PdfStreamError as e:
-            print(f'Error reading PDF: {e}')
-            return []
-        async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
-            return Document(name=doc_name, id=f'{doc_name}_{page_number}', meta_data={'page': page_number}, content=page.extract_text())
-        documents = await asyncio.gather(*[
-                _process_document(doc_name, page_number, page)
-                for page_number, page in enumerate(doc_reader.pages, start=1)
-            ])
         if self.chunk:
             return self._build_chunked_documents(documents)
         return documents
@@ -424,113 +285,6 @@ class PDFUrlReader(BasePDFReader):
             return self._build_chunked_documents(documents)
         return documents
 
-    async def async_read(self, url: str) -> List[Document]:
-        if not url:
-            raise ValueError('No url provided')
-        print(f'Reading: {url}')
-        async with httpx.AsyncClient() as client:
-            for attempt in range(3):
-                try:
-                    response = await client.get(url)
-                    break
-                except httpx.RequestError as e:
-                    if attempt == 2:
-                        print(f'Failed to fetch PDF after 3 attempts: {e}')
-                        raise
-                    wait_time = 2**attempt
-                    print(f'Request failed, retrying in {wait_time} seconds...')
-                    await asyncio.sleep(wait_time)
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                print(f'HTTP error occurred: {e.response.status_code} - {e.response.text}')
-                raise
-        doc_name = url.split('/')[-1].split('.')[0].replace('/', '_').replace(' ', '_')
-        doc_reader = DocumentReader(BytesIO(response.content))
-        async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
-            return Document(name=doc_name, id=f'{doc_name}_{page_number}', meta_data={'page': page_number}, content=page.extract_text())
-        documents = await asyncio.gather(*[
-                _process_document(doc_name, page_number, page)
-                for page_number, page in enumerate(doc_reader.pages, start=1)
-            ])
-        if self.chunk:
-            return self._build_chunked_documents(documents)
-        return documents
-
-
-class PDFImageReader(BasePDFReader):
-    def read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
-        if not pdf:
-            raise ValueError('No pdf provided')
-        try:
-            if isinstance(pdf, str):
-                doc_name = pdf.split('/')[-1].split('.')[0].replace(' ', '_')
-            else:
-                doc_name = pdf.name.split('.')[0]
-        except Exception:
-            doc_name = 'pdf'
-        print(f'Reading: {doc_name}')
-        doc_reader = DocumentReader(pdf)
-        documents = []
-        for page_number, page in enumerate(doc_reader.pages, start=1):
-            documents.append(process_image_page(doc_name, page_number, page))
-        if self.chunk:
-            return self._build_chunked_documents(documents)
-        return documents
-
-    async def async_read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
-        if not pdf:
-            raise ValueError('No pdf provided')
-        try:
-            if isinstance(pdf, str):
-                doc_name = pdf.split('/')[-1].split('.')[0].replace(' ', '_')
-            else:
-                doc_name = pdf.name.split('.')[0]
-        except Exception:
-            doc_name = 'pdf'
-        print(f'Reading: {doc_name}')
-        doc_reader = DocumentReader(pdf)
-        documents = await asyncio.gather(*[
-                async_process_image_page(doc_name, page_number, page)
-                for page_number, page in enumerate(doc_reader.pages, start=1)
-            ])
-        if self.chunk:
-            return self._build_chunked_documents(documents)
-        return documents
-
-
-class PDFUrlImageReader(BasePDFReader):
-    def read(self, url: str) -> List[Document]:
-        if not url:
-            raise ValueError('No url provided')
-        print(f'Reading: {url}')
-        response = httpx.get(url)
-        doc_name = url.split('/')[-1].split('.')[0].replace(' ', '_')
-        doc_reader = DocumentReader(BytesIO(response.content))
-        documents = []
-        for page_number, page in enumerate(doc_reader.pages, start=1):
-            documents.append(process_image_page(doc_name, page_number, page))
-        if self.chunk:
-            return self._build_chunked_documents(documents)
-        return documents
-
-    async def async_read(self, url: str) -> List[Document]:
-        if not url:
-            raise ValueError('No url provided')
-        print(f'Reading: {url}')
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url)
-            response.raise_for_status()
-        doc_name = url.split('/')[-1].split('.')[0].replace(' ', '_')
-        doc_reader = DocumentReader(BytesIO(response.content))
-        documents = await asyncio.gather(*[
-                async_process_image_page(doc_name, page_number, page)
-                for page_number, page in enumerate(doc_reader.pages, start=1)
-            ])
-        if self.chunk:
-            return self._build_chunked_documents(documents)
-        return documents
-
 
 class TextReader(Reader):
     def read(self, file: Union[Path, IO[Any]]) -> List[Document]:
@@ -558,39 +312,6 @@ class TextReader(Reader):
         except Exception as e:
             print(f'Error reading: {file}: {e}')
             return []
-
-    async def async_read(self, file: Union[Path, IO[Any]]) -> List[Document]:
-        try:
-            if isinstance(file, Path):
-                if not file.exists():
-                    raise FileNotFoundError(f'Could not find file: {file}')
-                print(f'Reading asynchronously: {file}')
-                file_name = file.stem
-                async with aiofiles.open(file, 'r', encoding='utf-8') as f:
-                    file_contents = await f.read()
-            else:
-                print(f'Reading uploaded file asynchronously: {file.name}')
-                file_name = file.name.split('.')[0]
-                file.seek(0)
-                file_contents = file.read().decode('utf-8')
-            document = Document(name=file_name, id=file_name, content=file_contents)
-            if self.chunk:
-                return await self._async_chunk_document(document)
-            return [document]
-        except Exception as e:
-            print(f'Error reading asynchronously: {file}: {e}')
-            return []
-
-    async def _async_chunk_document(self, document: Document) -> List[Document]:
-        if not self.chunk or not document:
-            return [document]
-        async def process_chunk(chunk_doc: Document) -> Document:
-            return chunk_doc
-        chunked_documents = self.chunk_document(document)
-        if not chunked_documents:
-            return [document]
-        tasks = [process_chunk(chunk_doc) for chunk_doc in chunked_documents]
-        return await asyncio.gather(*tasks)
 
 
 class URLReader(Reader):
@@ -645,10 +366,6 @@ class WebsiteReader(Reader):
         sleep_time = random.uniform(min_seconds, max_seconds)
         await asyncio.sleep(sleep_time)
 
-    def _get_primary_domain(self, url: str) -> str:
-        domain_parts = urlparse(url).netloc.split('.')
-        return '.'.join(domain_parts[-2:])
-
     def _extract_main_content(self, soup: BeautifulSoup) -> str:
         for tag in ['article', 'main']:
             element = soup.find(tag)
@@ -663,7 +380,8 @@ class WebsiteReader(Reader):
     def crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
         num_links = 0
         crawler_result: Dict[str, str] = {}
-        primary_domain = self._get_primary_domain(url)
+        domain_parts = urlparse(url).netloc.split('.')
+        primary_domain = '.'.join(domain_parts[-2:])
         self._urls_to_crawl.append((url, starting_depth))
         while self._urls_to_crawl:
             current_url, current_depth = self._urls_to_crawl.pop(0)
@@ -700,7 +418,8 @@ class WebsiteReader(Reader):
     async def async_crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
         num_links = 0
         crawler_result: Dict[str, str] = {}
-        primary_domain = self._get_primary_domain(url)
+        domain_parts = urlparse(url).netloc.split('.')
+        primary_domain = '.'.join(domain_parts[-2:])
         self._visited = set()
         self._urls_to_crawl = [(url, starting_depth)]
         async with httpx.AsyncClient() as client:

@@ -6,7 +6,7 @@ from chromadb.api.types import GetResult, IncludeEnum, QueryResult
 from enum import Enum
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
-from agno.reader import Document, Embedder, OllamaEmbedder
+from agno.reader import Document, Embedder
 
 
 class SearchType(str, Enum):
@@ -112,9 +112,7 @@ class VectorDb(ABC):
 class ChromaDb(VectorDb):
     def __init__(self, collection: str, embedder: Optional[Embedder] = None, distance: Distance = Distance.cosine, path: str = 'tmp/chromadb', persistent_client: bool = False, reranker = None, **kwargs):
         self.collection_name: str = collection
-        if embedder is None:
-            embedder = OllamaEmbedder()
-        self.embedder: Embedder = embedder
+        self.embedder: Embedder = embedder or Embedder()
         self.distance: Distance = distance
         self._client: Optional[ClientAPI] = None
         self._collection: Optional[Collection] = None

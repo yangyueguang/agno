@@ -24,7 +24,6 @@ from textwrap import dedent
 from collections import ChainMap, defaultdict, deque
 from pydantic import BaseModel, ValidationError
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Set, Type, Union, cast, overload
-from agno.knowledge import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.models import Model, Citations, Message, MessageReferences, MessageMetrics, ModelResponse, ModelResponseEvent, Timer
 from agno.storage import Storage, AgentSession
@@ -32,6 +31,231 @@ from agno.memory import Memory, SessionSummary, AgentMemory, AgentRun
 from agno.reader import Document
 from agno.tools import Function, Toolkit
 from agno.run import RunEvent, RunResponse, RunResponseExtraData, TeamRunResponse, RunMessages, NextAction, ReasoningStep, ReasoningSteps, get_deepseek_reasoning, get_openai_reasoning, aget_deepseek_reasoning, get_next_action, update_messages_with_reasoning, aget_openai_reasoning
+from agno.reader import *
+from agno.vectordb import VectorDb
+
+
+class AgentKnowledge:
+    """ 知识库 支持文档 csv,doc,docx,pdf,txt,html,website"""
+    def __init__(self, urls: List[str], vector_db: VectorDb = None, num_documents=5, optimize_on=1000, docs: List[Document] = None):
+        urls = [u for u in urls if u]
+        self.urls = [url for url in urls if not vector_db.name_exists(name=url)] if vector_db else urls
+        self.docs = docs
+        self.vector_db = vector_db
+        self.num_documents = num_documents
+        self.optimize_on = optimize_on
+        self.chunking_strategy = ChunkingStrategy()
+
+    @property
+    def document_lists(self) -> Iterator[List[Document]]:
+        for u in self.urls:
+            if u.endswith('.csv'):
+                if u.startswith('http'):
+                    yield CSVUrlReader().read(u)
+                else:
+                    yield CSVReader().read(u)
+            elif u.endswith(('doc', 'docx')):
+                yield DocxReader().read(file=u)
+            elif u.endswith('.pdf'):
+                yield PDFUrlReader().read(url=u)
+            elif u.endswith('.txt'):
+                yield TextReader().read(file=u)
+            elif u.endswith(('.html', '.xml')):
+                yield URLReader().read(url=u)
+            elif u.startswith('http'):
+                yield WebsiteReader(max_depth=3, max_links=10).read(url=u)
+
+    @property
+    async def async_document_lists(self) -> AsyncIterator[List[Document]]:
+        for u in self.urls:
+            if u.endswith('.csv'):
+                if u.startswith('http'):
+                    yield CSVUrlReader().read(u)
+                else:
+                    yield CSVReader().read(u)
+            elif u.endswith(('.doc', '.docx')):
+                yield DocxReader().read(file=u)
+            elif u.endswith('.pdf'):
+                yield await PDFUrlReader().async_read(url=u)
+            elif u.endswith('.txt'):
+                yield await TextReader().async_read(file=u)
+            elif u.endswith(('.html', '.xml')):
+                yield URLReader().read(url=u)
+            elif u.startswith('http'):
+                yield await WebsiteReader(max_depth=3, max_links=10).async_read(url=u)
+
+    def search(self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        try:
+            if self.vector_db is None:
+                print('未提供矢量数据库')
+                return []
+            _num_documents = num_documents or self.num_documents
+            print(f'Getting {_num_documents} relevant documents for query: {query}')
+            return self.vector_db.search(query=query, limit=_num_documents, filters=filters)
+        except Exception as e:
+            print(f'搜索文档时出错: {e}')
+            return []
+
+    async def async_search(self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        try:
+            if self.vector_db is None:
+                print('未提供矢量数据库')
+                return []
+            _num_documents = num_documents or self.num_documents
+            print(f'Getting {_num_documents} relevant documents for query: {query}')
+            try:
+                return await self.vector_db.async_search(query=query, limit=_num_documents, filters=filters)
+            except NotImplementedError:
+                print('Vector db does not support async search')
+                return self.search(query=query, num_documents=_num_documents, filters=filters)
+        except Exception as e:
+            print(f'搜索文档时出错: {e}')
+            return []
+
+    def load(self, recreate: bool = False, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
+        if self.vector_db is None:
+            print('No vector db provided')
+            return
+        if recreate:
+            print('Dropping collection')
+            self.vector_db.drop()
+        if not self.vector_db.exists():
+            print('Creating collection')
+            self.vector_db.create()
+        print('Loading knowledge base')
+        num_documents = 0
+        for document_list in self.document_lists:
+            documents_to_load = document_list
+            if upsert and self.vector_db.upsert_available():
+                self.vector_db.upsert(documents=documents_to_load, filters=filters)
+            else:
+                if skip_existing:
+                    seen_content = set()
+                    documents_to_load = []
+                    for doc in document_list:
+                        if doc.content not in seen_content and not self.vector_db.doc_exists(doc):
+                            seen_content.add(doc.content)
+                            documents_to_load.append(doc)
+                self.vector_db.insert(documents=documents_to_load, filters=filters)
+            num_documents += len(documents_to_load)
+            print(f'Added {len(documents_to_load)} documents to knowledge base')
+
+    async def aload(self, recreate: bool = False, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
+        if self.vector_db is None:
+            print('No vector db provided')
+            return
+        if recreate:
+            print('Dropping collection')
+            await self.vector_db.async_drop()
+        if not await self.vector_db.async_exists():
+            print('Creating collection')
+            await self.vector_db.async_create()
+        print('Loading knowledge base')
+        num_documents = 0
+        async for document_list in self.async_document_lists:
+            documents_to_load = document_list
+            if upsert and self.vector_db.upsert_available():
+                await self.vector_db.async_upsert(documents=documents_to_load, filters=filters)
+            else:
+                if skip_existing:
+                    seen_content = set()
+                    documents_to_load = []
+                    for doc in document_list:
+                        if doc.content not in seen_content and not (await self.vector_db.async_doc_exists(doc)):
+                            seen_content.add(doc.content)
+                            documents_to_load.append(doc)
+                await self.vector_db.async_insert(documents=documents_to_load, filters=filters)
+            num_documents += len(documents_to_load)
+            print(f'Added {len(documents_to_load)} documents to knowledge base')
+
+    def load_documents(self, documents: List[Document], upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
+        print('Loading knowledge base')
+        if self.vector_db is None:
+            print('No vector db provided')
+            return
+        print('Creating collection')
+        self.vector_db.create()
+        if upsert and self.vector_db.upsert_available():
+            self.vector_db.upsert(documents=documents, filters=filters)
+            print(f'Loaded {len(documents)} documents to knowledge base')
+        else:
+            documents_to_load = ([document for document in documents if not self.vector_db.doc_exists(document)]
+                if skip_existing
+                else documents)
+            if len(documents_to_load) > 0:
+                self.vector_db.insert(documents=documents_to_load, filters=filters)
+                print(f'Loaded {len(documents_to_load)} documents to knowledge base')
+            else:
+                print('No new documents to load')
+
+    async def async_load_documents(self, documents: List[Document], upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
+        print('Loading knowledge base')
+        if self.vector_db is None:
+            print('No vector db provided')
+            return
+        print('Creating collection')
+        try:
+            await self.vector_db.async_create()
+        except NotImplementedError:
+            print('Vector db does not support async create')
+            self.vector_db.create()
+        if upsert and self.vector_db.upsert_available():
+            try:
+                await self.vector_db.async_upsert(documents=documents, filters=filters)
+            except NotImplementedError:
+                print('Vector db does not support async upsert')
+                self.vector_db.upsert(documents=documents, filters=filters)
+            print(f'Loaded {len(documents)} documents to knowledge base')
+        else:
+            if skip_existing:
+                try:
+                    existence_checks = await asyncio.gather(*[self.vector_db.async_doc_exists(document) for document in documents], return_exceptions=True)
+                    documents_to_load = [
+                        doc
+                        for doc, exists in zip(documents, existence_checks)
+                        if not (isinstance(exists, bool) and exists)
+                    ]
+                except NotImplementedError:
+                    print('Vector db does not support async doc_exists')
+                    documents_to_load = [document for document in documents if not self.vector_db.doc_exists(document)]
+            else:
+                documents_to_load = documents
+            if len(documents_to_load) > 0:
+                try:
+                    await self.vector_db.async_insert(documents=documents_to_load, filters=filters)
+                except NotImplementedError:
+                    print('Vector db does not support async insert')
+                    self.vector_db.insert(documents=documents_to_load, filters=filters)
+                print(f'Loaded {len(documents_to_load)} documents to knowledge base')
+            else:
+                print('No new documents to load')
+
+    def load_document(self, document: Document, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
+        self.load_documents(documents=[document], upsert=upsert, skip_existing=skip_existing, filters=filters)
+
+    async def async_load_document(self, document: Document, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
+        await self.async_load_documents(documents=[document], upsert=upsert, skip_existing=skip_existing, filters=filters)
+
+    def load_dict(self, document: Dict[str, Any], upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
+        self.load_documents(documents=[Document.from_dict(document)], upsert=upsert, skip_existing=skip_existing, filters=filters)
+
+    def load_json(self, document: str, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
+        self.load_documents(documents=[Document.from_json(document)], upsert=upsert, skip_existing=skip_existing, filters=filters)
+
+    def load_text(self, text: str, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
+        self.load_documents(documents=[Document(content=text)], upsert=upsert, skip_existing=skip_existing, filters=filters)
+
+    def exists(self) -> bool:
+        if self.vector_db is None:
+            print('No vector db provided')
+            return False
+        return self.vector_db.exists()
+
+    def delete(self) -> bool:
+        if self.vector_db is None:
+            print('No vector db available')
+            return True
+        return self.vector_db.delete()
 
 
 class SessionMetrics:
