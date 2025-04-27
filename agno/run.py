@@ -2,18 +2,18 @@ import json
 from enum import Enum
 from time import time
 from pydantic import BaseModel, Field
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Union, Any
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models import Citations, Message, MessageReferences
 
 
-@dataclass
 class RunMessages:
-    messages: List[Message] = field(default_factory=list)
-    system_message: Optional[Message] = None
-    user_message: Optional[Message] = None
-    extra_messages: Optional[List[Message]] = None
+    def __init__(self, messages: List[Message] = None, system_message: Message = None, user_message: Message = None, extra_messages: List[Message] = None):
+        self.messages = messages or []
+        self.system_message = system_message
+        self.user_message = user_message
+        self.extra_messages = extra_messages or []
 
     def get_input_messages(self) -> List[Message]:
         input_messages = []
@@ -156,12 +156,12 @@ class RunEvent(str, Enum):
     workflow_completed = 'WorkflowCompleted'
 
 
-@dataclass
 class RunResponseExtraData:
-    references: Optional[List[MessageReferences]] = None
-    add_messages: Optional[List[Message]] = None
-    reasoning_steps: Optional[List['ReasoningStep']] = None
-    reasoning_messages: Optional[List[Message]] = None
+    def __init__(self, references: Optional[List[MessageReferences]] = None, add_messages: Optional[List[Message]] = None, reasoning_steps: Optional[List['ReasoningStep']] = None, reasoning_messages: Optional[List[Message]] = None):
+        self.references = references
+        self.add_messages = add_messages
+        self.reasoning_steps = reasoning_steps
+        self.reasoning_messages = reasoning_messages
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {}
@@ -190,32 +190,39 @@ class RunResponseExtraData:
         return cls(add_messages=add_messages, reasoning_steps=reasoning_steps, reasoning_messages=reasoning_messages, references=references)
 
 
-@dataclass
 class RunResponse:
-    content: Optional[Any] = None
-    content_type: str = 'str'
-    thinking: Optional[str] = None
-    event: str = RunEvent.run_response.value
-    messages: Optional[List[Message]] = None
-    metrics: Optional[Dict[str, Any]] = None
-    model: Optional[str] = None
-    run_id: Optional[str] = None
-    agent_id: Optional[str] = None
-    session_id: Optional[str] = None
-    workflow_id: Optional[str] = None
-    tools: Optional[List[Dict[str, Any]]] = None
-    formatted_tool_calls: Optional[List[str]] = None
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
-    response_audio: Optional[AudioResponse] = None
-    citations: Optional[Citations] = None
-    extra_data: Optional[RunResponseExtraData] = None
-    created_at: int = field(default_factory=lambda: int(time()))
+    def __init__(self, content=None, content_type: str = 'str', thinking: str = None, event: str = RunEvent.run_response.value,
+            messages: List[Message] = None, metrics: Dict[str, Any] = None,
+            model: str = None, run_id: str = None, agent_id: str = None, session_id: str = None,
+            workflow_id: str = None, tools: Optional[List[Dict[str, Any]]] = None,
+            formatted_tool_calls: List[str] = None, images: List[ImageArtifact] = None,
+            videos: List[VideoArtifact] = None, audio: List[AudioArtifact] = None,
+            response_audio: AudioResponse = None, citations: Citations = None,
+            extra_data: RunResponseExtraData = None, created_at: int = 0):
+        self.content = content
+        self.content_type = content_type
+        self.thinking = thinking
+        self.event = event
+        self.messages = messages
+        self.metrics = metrics
+        self.model = model
+        self.run_id = run_id
+        self.agent_id = agent_id
+        self.session_id = session_id
+        self.workflow_id = workflow_id
+        self.tools = tools
+        self.formatted_tool_calls = formatted_tool_calls
+        self.images = images
+        self.videos = videos
+        self.audio = audio
+        self.response_audio = response_audio
+        self.citations = citations
+        self.extra_data = extra_data
+        self.created_at = created_at or int(time())
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {k: v
-            for k, v in asdict(self).items()
+            for k, v in self.__dict__.items()
             if v is not None and k not in ['messages', 'extra_data', 'images', 'videos', 'audio', 'response_audio']}
         if self.messages is not None:
             _dict['messages'] = [m.to_dict() for m in self.messages]
@@ -252,32 +259,15 @@ class RunResponse:
             return json.dumps(self.content, **kwargs)
 
 
-@dataclass
-class TeamRunResponse:
-    event: str = RunEvent.run_response.value
-    content: Optional[Any] = None
-    content_type: str = 'str'
-    thinking: Optional[str] = None
-    messages: Optional[List[Message]] = None
-    metrics: Optional[Dict[str, Any]] = None
-    model: Optional[str] = None
-    member_responses: List[Union['TeamRunResponse', RunResponse]] = field(default_factory=list)
-    run_id: Optional[str] = None
-    team_id: Optional[str] = None
-    session_id: Optional[str] = None
-    tools: Optional[List[Dict[str, Any]]] = None
-    formatted_tool_calls: Optional[List[str]] = None
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
-    response_audio: Optional[AudioResponse] = None
-    citations: Optional[Citations] = None
-    extra_data: Optional[RunResponseExtraData] = None
-    created_at: int = field(default_factory=lambda: int(time()))
+class TeamRunResponse(RunResponse):
+    def __init__(self, member_responses: List[Union['TeamRunResponse', RunResponse]] = None, team_id: str = None, **kwargs):
+        super().__init__(**kwargs)
+        self.member_responses = member_responses or []
+        self.team_id = team_id
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {k: v
-            for k, v in asdict(self).items()
+            for k, v in self.__dict__.items()
             if v is not None and k not in ['messages', 'extra_data', 'images', 'videos', 'audio', 'response_audio']}
         if self.messages is not None:
             _dict['messages'] = [m.to_dict() for m in self.messages]

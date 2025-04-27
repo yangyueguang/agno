@@ -42,18 +42,14 @@ class MemoryRow(BaseModel):
         _dict = self.model_dump(exclude={'created_at', 'updated_at'})
         _dict['created_at'] = self.created_at.isoformat() if self.created_at else None
         _dict['updated_at'] = self.updated_at.isoformat() if self.updated_at else None
-        return _dict
-
-    def to_dict(self) -> Dict[str, Any]:
-        return self.serializable_dict()
-
-    @model_validator(mode='after')
-    def generate_id(self) -> 'MemoryRow':
         if self.id is None:
             memory_str = json.dumps(self.memory, sort_keys=True)
             cleaned_memory = memory_str.replace(' ', '').replace('\n', '').replace('\t', '')
             self.id = md5(cleaned_memory.encode()).hexdigest()
-        return self
+        return _dict
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self.serializable_dict()
 
 
 class MemoryDb(ABC):
@@ -746,11 +742,11 @@ class AgentMemory(BaseModel):
         return copied_obj
 
 
-@dataclass
 class TeamRun:
-    message: Optional[Message] = None
-    member_runs: Optional[List[AgentRun]] = None
-    response: Optional[TeamRunResponse] = None
+    def __init__(self,  message: Message = None, member_runs: List[AgentRun] = None, response: TeamRunResponse = None):
+        self.message = message
+        self.member_runs = member_runs
+        self.response = response
 
     def to_dict(self) -> Dict[str, Any]:
         message = self.message.to_dict() if self.message else None
@@ -766,36 +762,51 @@ class TeamRun:
         return cls(message=message, member_runs=member_runs, response=response)
 
 
-@dataclass
 class TeamMemberInteraction:
-    member_name: str
-    task: str
-    response: RunResponse
+    def __init__(self, member_name='', task='', response: RunResponse = None):
+        self.member_name = member_name
+        self.task = task
+        self.response = response
 
 
-@dataclass
 class TeamContext:
-    member_interactions: List[TeamMemberInteraction] = field(default_factory=list)
-    text: Optional[str] = None
+    def __init__(self, member_interactions: List[TeamMemberInteraction] = None, text: str = None):
+        self.member_interactions = member_interactions or []
+        self.text = text
 
 
-@dataclass
 class TeamMemory:
-    runs: List[TeamRun] = field(default_factory=list)
-    messages: List[Message] = field(default_factory=list)
-    update_system_message_on_change: bool = True
-    team_context: Optional[TeamContext] = None
-    create_user_memories: bool = False
-    update_user_memories_after_run: bool = True
-    db: Optional[MemoryDb] = None
-    user_id: Optional[str] = None
-    retrieval: MemoryRetrieval = MemoryRetrieval.last_n
-    memories: Optional[List[Memory]] = None
-    classifier: Optional[MemoryClassifier] = None
-    manager: Optional[MemoryManager] = None
-    num_memories: Optional[int] = None
-    updating_memory: bool = False
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    def __init__(self,
+    runs: List[TeamRun] = None,
+    messages: List[Message] = None,
+    update_system_message_on_change=True,
+    team_context: TeamContext = None,
+    create_user_memories=False,
+    update_user_memories_after_run=True,
+    db: MemoryDb = None,
+    user_id: str = None,
+    retrieval: MemoryRetrieval = MemoryRetrieval.last_n,
+    memories: List[Memory] = None,
+    classifier: MemoryClassifier = None,
+    manager: MemoryManager = None,
+    num_memories: int = None,
+    updating_memory=False,
+    model_config: dict = None):
+        self.runs = runs or []
+        self.messages = messages or []
+        self.update_system_message_on_change = update_system_message_on_change
+        self.team_context = team_context
+        self.create_user_memories = create_user_memories
+        self.update_user_memories_after_run = update_user_memories_after_run
+        self.db = db
+        self.user_id = user_id
+        self.retrieval = retrieval
+        self.memories = memories
+        self.classifier = classifier
+        self.manager = manager
+        self.num_memories = num_memories
+        self.updating_memory = updating_memory
+        self.model_config = model_config or {'arbitrary_types_allowed': True}
 
     def to_dict(self) -> Dict[str, Any]:
         _memory_dict = {}

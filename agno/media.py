@@ -31,37 +31,11 @@ class AudioArtifact(Media):
     length: Optional[str] = None
     mime_type: Optional[str] = None
 
-    @model_validator(mode='before')
-    def validate_exclusive_audio(cls, data: Any):
-        if data.get('url') and data.get('base64_audio'):
-            raise ValueError('Provide either `url` or `base64_audio`, not both.')
-        if not data.get('url') and not data.get('base64_audio'):
-            raise ValueError('Either `url` or `base64_audio` must be provided.')
-        return data
-
 
 class Video(BaseModel):
     filepath: Optional[Union[Path, str]] = None
     content: Optional[Any] = None
     format: Optional[str] = 'mp4'
-
-    @model_validator(mode='before')
-    def validate_data(cls, data: Any):
-        filepath = data.get('filepath')
-        content = data.get('content')
-        if content and isinstance(content, str):
-            try:
-                decoded_content = base64.b64decode(content)
-                content = zlib.decompress(decoded_content)
-            except Exception:
-                content = base64.b64decode(content).decode('utf-8')
-        data['content'] = content
-        count = len([field for field in [filepath, content] if field is not None])
-        if count == 0:
-            raise ValueError('One of `filepath` or `content` must be provided.')
-        elif count > 1:
-            raise ValueError('Only one of `filepath` or `content` should be provided.')
-        return data
 
     def to_dict(self) -> Dict[str, Any]:
         response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8') if self.content else None, 'filepath': self.filepath, 'format': self.format}
@@ -77,25 +51,6 @@ class Audio(BaseModel):
     filepath: Optional[Union[Path, str]] = None
     url: Optional[str] = None
     format: Optional[str] = None
-
-    @model_validator(mode='before')
-    def validate_data(cls, data: Any):
-        filepath = data.get('filepath')
-        content = data.get('content')
-        url = data.get('url')
-        if content and isinstance(content, str):
-            try:
-                decoded_content = base64.b64decode(content)
-                content = zlib.decompress(decoded_content)
-            except Exception:
-                content = base64.b64decode(content).decode('utf-8')
-        data['content'] = content
-        count = len([field for field in [filepath, content, url] if field is not None])
-        if count == 0:
-            raise ValueError('One of `filepath` or `content` or `url` must be provided.')
-        elif count > 1:
-            raise ValueError('Only one of `filepath` or `content` or `url` should be provided.')
-        return data
 
     @property
     def audio_url_content(self) -> Optional[bytes]:
@@ -146,25 +101,6 @@ class Image(BaseModel):
         else:
             return None
 
-    @model_validator(mode='before')
-    def validate_data(cls, data: Any):
-        url = data.get('url')
-        filepath = data.get('filepath')
-        content = data.get('content')
-        if content and isinstance(content, str):
-            try:
-                decoded_content = base64.b64decode(content)
-                content = zlib.decompress(decoded_content)
-            except Exception:
-                content = base64.b64decode(content).decode('utf-8')
-        data['content'] = content
-        count = len([field for field in [url, filepath, content] if field is not None])
-        if count == 0:
-            raise ValueError('One of `url`, `filepath`, or `content` must be provided.')
-        elif count > 1:
-            raise ValueError('Only one of `url`, `filepath`, or `content` should be provided.')
-        return data
-
     def to_dict(self) -> Dict[str, Any]:
         response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8')
             if self.content
@@ -181,20 +117,6 @@ class File(BaseModel):
     filepath: Optional[Union[Path, str]] = None
     content: Optional[Any] = None
     mime_type: Optional[str] = None
-
-    @model_validator(mode='before')
-    @classmethod
-    def check_at_least_one_source(cls, data):
-        if isinstance(data, dict) and not any(data.get(field) for field in ['url', 'filepath', 'content']):
-            raise ValueError('At least one of url, filepath, or content must be provided')
-        return data
-
-    @field_validator('mime_type')
-    @classmethod
-    def validate_mime_type(cls, v):
-        if v is not None and v not in cls.valid_mime_types():
-            raise ValueError(f'Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}')
-        return v
 
     @classmethod
     def valid_mime_types(cls) -> List[str]:

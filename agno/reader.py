@@ -26,9 +26,9 @@ from agno.models import Model, Message
 from ollama import Client as OllamaClient
 
 
-@dataclass
 class Embedder:
-    dimensions: Optional[int] = 1536
+    def __init__(self, dimensions=1536):
+        self.dimensions = dimensions
 
     def get_embedding(self, text: str) -> List[float]:
         raise NotImplementedError
@@ -37,17 +37,17 @@ class Embedder:
         raise NotImplementedError
 
 
-
-
-@dataclass
 class OllamaEmbedder(Embedder):
-    id: str = 'llama3.1:8b'
-    dimensions: int = 4096
-    host: Optional[str] = None
-    timeout: Optional[Any] = None
-    options: Optional[Any] = None
-    client_kwargs: Optional[Dict[str, Any]] = None
-    ollama_client: Optional[OllamaClient] = None
+    def __init__(self, id: str = 'llama3.1:8b', dimensions: int = 4096, host: Optional[str] = None,
+                 timeout: Optional[Any] = None, options: Optional[Any] = None,
+                 client_kwargs: Optional[Dict[str, Any]] = None, ollama_client: Optional[OllamaClient] = None):
+        super().__init__(dimensions)
+        self.id = id
+        self.host = host
+        self.timeout = timeout
+        self.options = options
+        self.client_kwargs = client_kwargs
+        self.ollama_client = ollama_client
 
     @property
     def client(self) -> OllamaClient:
@@ -91,16 +91,16 @@ class OllamaEmbedder(Embedder):
         return embedding, usage
 
 
-@dataclass
 class Document:
-    content: str
-    id: Optional[str] = None
-    name: Optional[str] = None
-    meta_data: Dict[str, Any] = field(default_factory=dict)
-    embedder: Optional[Embedder] = None
-    embedding: Optional[List[float]] = None
-    usage: Optional[Dict[str, Any]] = None
-    reranking_score: Optional[float] = None
+    def __init__(self, content: str, id: str = None, name: str = None, meta_data: Dict[str, Any] = None, embedder: Embedder = None, embedding: List[float] = None, usage: Dict[str, Any] = None, reranking_score: float = None):
+        self.content = content
+        self.id = id
+        self.name = name
+        self.meta_data = meta_data or {}
+        self.embedder = embedder
+        self.embedding = embedding
+        self.usage = usage
+        self.reranking_score = reranking_score
 
     def embed(self, embedder: Optional[Embedder] = None) -> None:
         _embedder = embedder or self.embedder
@@ -123,166 +123,13 @@ class Document:
         return cls(**json.loads(document))
 
 
-class ChunkingStrategy(ABC):
-    @abstractmethod
-    def chunk(self, document: Document) -> List[Document]:
-        raise NotImplementedError
-
-    def clean_text(self, text: str) -> str:
-        cleaned_text = re.sub(r'\n+', '\n', text)
-        cleaned_text = re.sub(r'\s+', ' ', cleaned_text)
-        cleaned_text = re.sub(r'\t+', '\t', cleaned_text)
-        cleaned_text = re.sub(r'\r+', '\r', cleaned_text)
-        cleaned_text = re.sub(r'\f+', '\f', cleaned_text)
-        cleaned_text = re.sub(r'\v+', '\v', cleaned_text)
-        return cleaned_text
-
-
-class AgenticChunking(ChunkingStrategy):
-    def __init__(self, model: Optional[Model] = None, max_chunk_size: int = 5000):
-        if model is None:
-            model = Ollama()
-        self.max_chunk_size = max_chunk_size
-        self.model = model
-
-    def chunk(self, document: Document) -> List[Document]:
-        if len(document.content) <= self.max_chunk_size:
-            return [document]
-        chunks: List[Document] = []
-        remaining_text = self.clean_text(document.content)
-        chunk_meta_data = document.meta_data
-        chunk_number = 1
-        while remaining_text:
-            prompt = f'分析此文本并确定前{self.max_chunk_size}个字符内的自然断点。\n考虑语义完整性、段落边界和主题转换。\仅返回要打断文本的字符位置编号:\n{remaining_text[: self.max_chunk_size]}'
-            try:
-                response = self.model.response([Message(role='user', content=prompt)])
-                if response and response.content:
-                    break_point = min(int(response.content.strip()), self.max_chunk_size)
-                else:
-                    break_point = self.max_chunk_size
-            except Exception:
-                break_point = self.max_chunk_size
-            chunk = remaining_text[:break_point].strip()
-            meta_data = chunk_meta_data.copy()
-            meta_data['chunk'] = chunk_number
-            chunk_id = None
-            if document.id:
-                chunk_id = f'{document.id}_{chunk_number}'
-            elif document.name:
-                chunk_id = f'{document.name}_{chunk_number}'
-            meta_data['chunk_size'] = len(chunk)
-            chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk))
-            chunk_number += 1
-            remaining_text = remaining_text[break_point:].strip()
-            if not remaining_text:
-                break
-        return chunks
-
-
-class DocumentChunking(ChunkingStrategy):
-    def __init__(self, chunk_size: int = 5000, overlap: int = 0):
-        self.chunk_size = chunk_size
-        self.overlap = overlap
-
-    def chunk(self, document: Document) -> List[Document]:
-        if len(document.content) <= self.chunk_size:
-            return [document]
-        paragraphs = self.clean_text(document.content).split('\n\n')
-        chunks: List[Document] = []
-        current_chunk = []
-        current_size = 0
-        chunk_meta_data = document.meta_data
-        chunk_number = 1
-        for para in paragraphs:
-            para = para.strip()
-            para_size = len(para)
-            if current_size + para_size <= self.chunk_size:
-                current_chunk.append(para)
-                current_size += para_size
-            else:
-                meta_data = chunk_meta_data.copy()
-                meta_data['chunk'] = chunk_number
-                chunk_id = None
-                if document.id:
-                    chunk_id = f'{document.id}_{chunk_number}'
-                elif document.name:
-                    chunk_id = f'{document.name}_{chunk_number}'
-                meta_data['chunk_size'] = len('\n\n'.join(current_chunk))
-                if current_chunk:
-                    chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content='\n\n'.join(current_chunk)))
-                current_chunk = [para]
-                current_size = para_size
-        if current_chunk:
-            meta_data = chunk_meta_data.copy()
-            meta_data['chunk'] = chunk_number
-            chunk_id = None
-            if document.id:
-                chunk_id = f'{document.id}_{chunk_number}'
-            elif document.name:
-                chunk_id = f'{document.name}_{chunk_number}'
-            meta_data['chunk_size'] = len('\n\n'.join(current_chunk))
-            chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content='\n\n'.join(current_chunk)))
-        if self.overlap > 0:
-            overlapped_chunks = []
-            for i in range(len(chunks)):
-                if i > 0:
-                    prev_text = chunks[i - 1].content[-self.overlap :]
-                    meta_data = chunk_meta_data.copy()
-                    meta_data['chunk'] = chunk_number
-                    chunk_id = None
-                    if document.id:
-                        chunk_id = f'{document.id}_{chunk_number}'
-                    meta_data['chunk_size'] = len(prev_text + chunks[i].content)
-                    if prev_text:
-                        overlapped_chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=prev_text + chunks[i].content))
-                else:
-                    overlapped_chunks.append(chunks[i])
-            chunks = overlapped_chunks
-        return chunks
-
-
-class FixedSizeChunking(ChunkingStrategy):
-    def __init__(self, chunk_size: int = 5000, overlap: int = 0):
+class ChunkingStrategy:
+    def __init__(self, chunk_size=5000, overlap=0, separators: List[str] = None):
         if overlap >= chunk_size:
-            raise ValueError(f'Invalid parameters: overlap ({overlap}) must be less than chunk size ({chunk_size}).')
+            chunk_size, overlap = overlap, chunk_size
         self.chunk_size = chunk_size
         self.overlap = overlap
-
-    def chunk(self, document: Document) -> List[Document]:
-        content = self.clean_text(document.content)
-        content_length = len(content)
-        chunked_documents: List[Document] = []
-        chunk_number = 1
-        chunk_meta_data = document.meta_data
-        start = 0
-        while start + self.overlap < content_length:
-            end = min(start + self.chunk_size, content_length)
-            if end < content_length:
-                while end > start and content[end] not in [' ', '\n', '\r', '\t']:
-                    end -= 1
-            if end == start:
-                end = start + self.chunk_size
-            chunk = content[start:end]
-            meta_data = chunk_meta_data.copy()
-            meta_data['chunk'] = chunk_number
-            chunk_id = None
-            if document.id:
-                chunk_id = f'{document.id}_{chunk_number}'
-            elif document.name:
-                chunk_id = f'{document.name}_{chunk_number}'
-            meta_data['chunk_size'] = len(chunk)
-            chunked_documents.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk))
-            chunk_number += 1
-            start = end - self.overlap
-        return chunked_documents
-
-
-class RecursiveChunking(ChunkingStrategy):
-    def __init__(self, chunk_size: int = 5000, overlap: int = 0):
-        if overlap >= chunk_size:
-            raise ValueError(f'Invalid parameters: overlap ({overlap}) must be less than chunk size ({chunk_size}).')
-        self.chunk_size = chunk_size
-        self.overlap = overlap
+        self.separators = separators or ['\n\n', '\n', '。', ' ']
 
     def chunk(self, document: Document) -> List[Document]:
         if len(document.content) <= self.chunk_size:
@@ -291,11 +138,11 @@ class RecursiveChunking(ChunkingStrategy):
         start = 0
         chunk_meta_data = document.meta_data
         chunk_number = 1
-        content = self.clean_text(document.content)
+        content = re.sub(r'\v+', '\v', re.sub(r'\f+', '\f', re.sub(r'\r+', '\r', re.sub(r'\t+', '\t', re.sub(r'\s+', ' ', document.content)))))
         while start < len(content):
             end = min(start + self.chunk_size, len(content))
             if end < len(content):
-                for sep in ['\n', '.']:
+                for sep in self.separators:
                     last_sep = content[start:end].rfind(sep)
                     if last_sep != -1:
                         end = start + last_sep + 1
@@ -316,33 +163,12 @@ class RecursiveChunking(ChunkingStrategy):
         return chunks
 
 
-class SemanticChunking(ChunkingStrategy):
-    def __init__(self, embedder = None, chunk_size: int = 5000, similarity_threshold: Optional[float] = 0.5):
-        self.embedder = embedder or OllamaEmbedder()
-        self.chunk_size = chunk_size
-        self.similarity_threshold = similarity_threshold
-        self.chunker = SemanticChunker(embedding_model=self.embedder.id, chunk_size=self.chunk_size, threshold=self.similarity_threshold)
-
-    def chunk(self, document: Document) -> List[Document]:
-        if not document.content:
-            return [document]
-        chunks = self.chunker.chunk(self.clean_text(document.content))
-        chunked_documents: List[Document] = []
-        for i, chunk in enumerate(chunks, 1):
-            meta_data = document.meta_data.copy()
-            meta_data['chunk'] = i
-            chunk_id = f'{document.id}_{i}' if document.id else None
-            meta_data['chunk_size'] = len(chunk.text)
-            chunked_documents.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk.text))
-        return chunked_documents
-
-
-@dataclass
 class Reader:
-    chunk: bool = True
-    chunk_size: int = 3000
-    separators: List[str] = field(default_factory=lambda: ['\n', '\n\n', '\r', '\r\n', '\n\r', '\t', ' ', '  '])
-    chunking_strategy: ChunkingStrategy = field(default_factory=FixedSizeChunking)
+    def __init__(self, chunk: bool = True, chunk_size: int = 3000, separators: List[str] = None, chunking_strategy: ChunkingStrategy = None):
+        self.chunk = chunk
+        self.chunk_size = chunk_size
+        self.separators = separators or ['\n', '\n\n', '\r', '\r\n', '\n\r', '\t', ' ', '  ']
+        self.chunking_strategy = chunking_strategy or ChunkingStrategy()
 
     def read(self, obj: Any) -> List[Document]:
         raise NotImplementedError
@@ -811,12 +637,13 @@ class URLReader(Reader):
         return [document]
 
 
-@dataclass
 class WebsiteReader(Reader):
-    max_depth: int = 3
-    max_links: int = 10
-    _visited: Set[str] = field(default_factory=set)
-    _urls_to_crawl: List[Tuple[str, int]] = field(default_factory=list)
+    def __init__(self, chunk: bool = True, chunk_size: int = 3000, separators: List[str] = None, chunking_strategy: ChunkingStrategy = None, max_depth=3, max_links=10, _visited: Set[str] = None, _urls_to_crawl: List[Tuple[str, int]] = None):
+        super().__init__(chunk, chunk_size, separators, chunking_strategy)
+        self.max_depth = max_depth
+        self.max_links = max_links
+        self._visited = _visited or set()
+        self._urls_to_crawl = _urls_to_crawl or []
 
     def delay(self, min_seconds=1, max_seconds=3):
         sleep_time = random.uniform(min_seconds, max_seconds)

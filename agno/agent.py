@@ -21,7 +21,7 @@ from inspect import signature
 from agno.ollama import Ollama
 from uuid import uuid4
 from textwrap import dedent
-from dataclasses import dataclass, asdict, fields, replace
+from dataclasses import dataclass, fields
 from collections import ChainMap, defaultdict, deque
 from pydantic import BaseModel, ValidationError
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Set, Type, Union, cast, overload
@@ -35,51 +35,19 @@ from agno.tools import Function, Toolkit
 from agno.run import RunEvent, RunResponse, RunResponseExtraData, TeamRunResponse, RunMessages, NextAction, ReasoningStep, ReasoningSteps, get_deepseek_reasoning, get_openai_reasoning, aget_deepseek_reasoning, get_next_action, update_messages_with_reasoning, aget_openai_reasoning
 
 
-def get_deepseek_reasoning_agent(reasoning_model: Model, monitoring: bool = False) -> 'Agent':
-    return Agent(model=reasoning_model, monitoring=monitoring)
-
-
-def get_openai_reasoning_agent(reasoning_model: Model, **kwargs) -> 'Agent':
-    return Agent(model=reasoning_model, **kwargs)
-
-
-def get_default_reasoning_agent(reasoning_model: Model, min_steps: int, max_steps: int, tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None, use_json_mode: bool = False, monitoring: bool = False, telemetry: bool = True, debug_mode: bool = False) -> Optional['Agent']:
-    agent = Agent(model=reasoning_model, description='You are a meticulous, thoughtful, and logical Reasoning Agent who solves complex problems through clear, structured, step-by-step analysis.', instructions=dedent(f'''
-步骤1-问题分析：\n-用你自己的话清楚地重述用户的任务，以确保完全理解。\n-明确指出需要哪些信息以及可能需要哪些工具或资源。
-第2步-分解和制定战略：\n-将问题分解为明确定义的子任务。\n-制定至少两种不同的策略或方法来解决问题，以确保彻底性。
-第3步-意图澄清和规划：\n-清楚地表达用户请求背后的意图。\n-从步骤2中选择最合适的策略，根据与用户意图和任务约束的一致性清楚地证明你的选择。\n-制定详细的分步行动计划，概述解决问题所需的行动顺序。
-步骤4-执行行动计划：
-对于每个计划步骤，记录：\n1.**标题**：概括步骤的简明标题。\n2.**行动**：以第一人称明确说明你的下一个行动（“我会……”）。\n3.**结果**：使用必要的工具执行行动，并提供结果的简明摘要。\n4.**推理**：清楚地解释你的理由，包括：
--必要性：为什么需要采取这一行动。\n-注意事项：强调关键考虑因素、潜在挑战和缓解策略。\n-进展：这一步如何从逻辑上遵循或建立在之前的行动之上。\n-假设：明确说明所做的任何假设，并证明其有效性。
-5.**下一步行动**：从以下选项中明确选择下一步：
--**继续**：如果需要进一步的步骤。\n-**验证**：当你得到一个潜在的答案时，表明它已经准备好进行验证。\n-**最终答案**：只有当您自信地验证了解决方案时。\n-**重置**：如果发现严重错误或不正确的结果，请立即重新开始分析。
-6.**置信度分数**：提供一个数字置信度分数（0.0-1.0），表明您对步骤的正确性及其结果的确定性。
-步骤5-验证（在最终确定答案之前必须进行）：
--通过以下方式明确验证您的解决方案：\n-与替代方法进行交叉验证（在步骤2中开发）。\n-使用其他可用工具或方法独立确认准确性。\n-清楚地记录验证结果和所选验证方法背后的推理。\n-如果验证失败或出现差异，明确指出错误，重置分析，并相应地修改计划。
-第6步-提供最终答案：
--一旦经过彻底验证并充满信心，就可以清晰简洁地交付您的解决方案。\n-简要重述你的答案如何满足用户的初衷并解决所述任务。
-一般操作指南：
--确保您的分析保持不变：
--**完成**：解决任务的所有要素。\n-**全面**：探索不同的观点并预测潜在的结果。\n-**逻辑**：保持所有步骤之间的连贯性。\n-**可操作**：提出明确可执行的步骤和行动。\n-**富有洞察力**：在适用的情况下提供创新和独特的视角。
--始终通过立即重置或修改步骤来明确处理错误和失误。\n-严格遵守最小{min_steps}和最大{max_steps}步数，以确保有效的任务解决。
--主动毫不犹豫地执行必要的工具，清楚地记录工具的使用情况。'''), tools=tools, show_tool_calls=False, response_model=ReasoningSteps, use_json_mode=use_json_mode, monitoring=monitoring, telemetry=telemetry, debug_mode=debug_mode)
-    agent.model.show_tool_calls = False
-    return agent
-
-
-@dataclass
 class SessionMetrics:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    prompt_tokens_details: Optional[dict] = None
-    completion_tokens_details: Optional[dict] = None
-    additional_metrics: Optional[dict] = None
-    time: Optional[float] = None
-    time_to_first_token: Optional[float] = None
-    timer: Optional[Timer] = None
+    def __init__(self, input_tokens=0, output_tokens=0, total_tokens=0, prompt_tokens=0, completion_tokens=0, prompt_tokens_details: dict = None, completion_tokens_details: dict = None, additional_metrics: dict = None, time: float = None, time_to_first_token: float = None, timer: Timer = None):
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.total_tokens = total_tokens
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
+        self.prompt_tokens_details = prompt_tokens_details
+        self.completion_tokens_details = completion_tokens_details
+        self.additional_metrics = additional_metrics
+        self.time = time
+        self.time_to_first_token = time_to_first_token
+        self.timer = timer
 
     def start_timer(self):
         if self.timer is None:
@@ -134,98 +102,26 @@ class SessionMetrics:
 
 
 class Agent:
-    model: Optional[Model] = None
-    name: Optional[str] = None
-    agent_id: Optional[str] = None
-    introduction: Optional[str] = None
-    user_id: Optional[str] = None
-    session_id: Optional[str] = None
-    session_name: Optional[str] = None
-    session_state: Optional[Dict[str, Any]] = None
-    context: Optional[Dict[str, Any]] = None
-    add_context: bool = False
-    resolve_context: bool = True
-    memory: Optional[AgentMemory] = None
-    add_history_to_messages: bool = False
-    num_history_responses: Optional[int] = None
-    num_history_runs: int = 3
-    knowledge: Optional[AgentKnowledge] = None
-    add_references: bool = False
-    retriever: Optional[Callable[..., Optional[List[Dict]]]] = None
-    references_format: Literal['json', 'yaml'] = 'json'
-    storage: Optional[Storage] = None
-    extra_data: Optional[Dict[str, Any]] = None
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
-    show_tool_calls: bool = True
-    tool_call_limit: Optional[int] = None
-    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-    reasoning: bool = False
-    reasoning_model: Optional[Model] = None
-    reasoning_agent: Optional['Agent'] = None
-    reasoning_min_steps: int = 1
-    reasoning_max_steps: int = 10
-    read_chat_history: bool = False
-    search_knowledge: bool = True
-    update_knowledge: bool = False
-    read_tool_call_history: bool = False
-    system_message: Optional[Union[str, Callable, Message]] = None
-    system_message_role: str = 'system'
-    create_default_system_message: bool = True
-    description: Optional[str] = None
-    goal: Optional[str] = None
-    instructions: Optional[Union[str, List[str], Callable]] = None
-    expected_output: Optional[str] = None
-    additional_context: Optional[str] = None
-    markdown: bool = False
-    add_name_to_instructions: bool = False
-    add_datetime_to_instructions: bool = False
-    add_state_in_messages: bool = False
-    add_messages: Optional[List[Union[Dict, Message]]] = None
-    user_message: Optional[Union[List, Dict, str, Callable, Message]] = None
-    user_message_role: str = 'user'
-    create_default_user_message: bool = True
-    retries: int = 0
-    delay_between_retries: int = 1
-    exponential_backoff: bool = False
-    response_model: Optional[Type[BaseModel]] = None
-    parse_response: bool = True
-    structured_outputs: bool = False
-    use_json_mode: bool = False
-    save_response_to_file: Optional[str] = None
-    stream: Optional[bool] = None
-    stream_intermediate_steps: bool = False
-    team: Optional[List['Agent']] = None
-    team_data: Optional[Dict[str, Any]] = None
-    role: Optional[str] = None
-    respond_directly: bool = False
-    add_transfer_instructions: bool = True
-    team_response_separator: str = '\n'
-    team_session_id: Optional[str] = None
-    team_id: Optional[str] = None
-    debug_mode: bool = False
-    monitoring: bool = False
-    telemetry: bool = True
-
-    def __init__(self, model: Optional[Model] = None, name: Optional[str] = None, agent_id: Optional[str] = None, introduction: Optional[str] = None,
-                 user_id: Optional[str] = None, session_id: Optional[str] = None, session_name: Optional[str] = None,
-                 session_state: Optional[Dict[str, Any]] = None, context: Optional[Dict[str, Any]] = None, add_context: bool = False,
-                 resolve_context: bool = True, memory: Optional[AgentMemory] = None, add_history_to_messages: bool = False,
-                 num_history_responses: Optional[int] = None, num_history_runs: int = 3, knowledge: Optional[AgentKnowledge] = None,
-                 add_references: bool = False, retriever: Optional[Callable[..., Optional[List[Dict]]]] = None, references_format: Literal['json', 'yaml'] = 'json',
+    def __init__(self, model: Model = None, name: str = None, agent_id: str = None, introduction: str = None,
+                 user_id: str = None, session_id: str = None, session_name: str = None,
+                 session_state: Optional[Dict[str, Any]] = None, context: Optional[Dict[str, Any]] = None, add_context=False,
+                 resolve_context=True, memory: Optional[AgentMemory] = None, add_history_to_messages=False,
+                 num_history_responses: int = None, num_history_runs=3, knowledge: Optional[AgentKnowledge] = None,
+                 add_references=False, retriever: Optional[Callable[..., Optional[List[Dict]]]] = None, references_format: Literal['json', 'yaml'] = 'json',
                  storage: Optional[Storage] = None, extra_data: Optional[Dict[str, Any]] = None, tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
-                 show_tool_calls: bool = True, tool_call_limit: Optional[int] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None, reasoning: bool = False,
-                 reasoning_model: Optional[Model] = None, reasoning_agent: Optional['Agent'] = None, reasoning_min_steps: int = 1,
-                 reasoning_max_steps: int = 10, read_chat_history: bool = False, search_knowledge: bool = True, update_knowledge: bool = False,
-                 read_tool_call_history: bool = False, system_message: Optional[Union[str, Callable, Message]] = None, system_message_role: str = 'system',
-                 create_default_system_message: bool = True, description: Optional[str] = None, goal: Optional[str] = None, instructions: Optional[Union[str, List[str], Callable]] = None,
-                 expected_output: Optional[str] = None, additional_context: Optional[str] = None, markdown: bool = False, add_name_to_instructions: bool = False,
-                 add_datetime_to_instructions: bool = False, add_state_in_messages: bool = False, add_messages: Optional[List[Union[Dict, Message]]] = None,
-                 user_message: Optional[Union[List, Dict, str, Callable, Message]] = None, user_message_role: str = 'user', create_default_user_message: bool = True,
-                 retries: int = 0, delay_between_retries: int = 1, exponential_backoff: bool = False, response_model: Optional[Type[BaseModel]] = None,
-                 parse_response: bool = True, structured_outputs: Optional[bool] = None, use_json_mode: bool = False, save_response_to_file: Optional[str] = None,
-                 stream: Optional[bool] = None, stream_intermediate_steps: bool = False, team: Optional[List['Agent']] = None, team_data: Optional[Dict[str, Any]] = None,
-                 role: Optional[str] = None, respond_directly: bool = False, add_transfer_instructions: bool = True, team_response_separator: str = '\n', debug_mode: bool = False,
-                 monitoring: bool = False, telemetry: bool = True):
+                 show_tool_calls=True, tool_call_limit: Optional[int] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None, reasoning=False,
+                 reasoning_model: Optional[Model] = None, reasoning_agent: Optional['Agent'] = None, reasoning_min_steps=1,
+                 reasoning_max_steps=10, read_chat_history=False, search_knowledge=True, update_knowledge=False,
+                 read_tool_call_history=False, system_message: Optional[Union[str, Callable, Message]] = None, system_message_role: str = 'system',
+                 create_default_system_message=True, description: str = None, goal: str = None, instructions: Optional[Union[str, List[str], Callable]] = None,
+                 expected_output: str = None, additional_context: str = None, markdown=False, add_name_to_instructions=False,
+                 add_datetime_to_instructions=False, add_state_in_messages=False, add_messages: Optional[List[Union[Dict, Message]]] = None,
+                 user_message: Optional[Union[List, Dict, str, Callable, Message]] = None, user_message_role='user', create_default_user_message=True,
+                 retries=0, delay_between_retries=1, exponential_backoff=False, response_model: Optional[Type[BaseModel]] = None,
+                 parse_response=True, structured_outputs=False, use_json_mode=False, save_response_to_file: str = None,
+                 stream=False, stream_intermediate_steps=False, team: Optional[List['Agent']] = None, team_data: Optional[Dict[str, Any]] = None,
+                 role: str = None, respond_directly=False, add_transfer_instructions=True, team_response_separator='\n', debug_mode=False,
+                 monitoring=False, telemetry=True):
         self.model = model
         self.name = name
         self.agent_id = agent_id
@@ -240,9 +136,7 @@ class Agent:
         self.memory = memory
         self.add_history_to_messages = add_history_to_messages
         self.num_history_responses = num_history_responses
-        self.num_history_runs = num_history_runs
-        if num_history_responses is not None:
-            self.num_history_runs = num_history_responses
+        self.num_history_runs = num_history_responses or num_history_runs
         self.knowledge = knowledge
         self.add_references = add_references
         self.retriever = retriever
@@ -283,14 +177,14 @@ class Agent:
         self.exponential_backoff = exponential_backoff
         self.response_model = response_model
         self.parse_response = parse_response
-        if structured_outputs is not None:
-            self.structured_outputs = structured_outputs
+        self.structured_outputs = structured_outputs
         self.use_json_mode = use_json_mode
         self.save_response_to_file = save_response_to_file
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
         self.team = team
         self.team_data = team_data
+        self.team_session_id: Optional[str] = None
         self.role = role
         self.respond_directly = respond_directly
         self.add_transfer_instructions = add_transfer_instructions
@@ -310,6 +204,31 @@ class Agent:
         self._tools_for_model: Optional[List[Dict]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None
         self._formatter: Optional[SafeFormatter] = None
+        if (self.reasoning or self.reasoning_model) and not self.reasoning_agent:
+            self.reasoning_agent = Agent(model=reasoning_model or self.model.__class__(id=self.model.id),
+                              description='你是一个细致、周到、有逻辑的推理代理，通过清晰、结构化、循序渐进的分析来解决复杂的问题',
+                              instructions=dedent(f'''
+            步骤1-问题分析：\n-用你自己的话清楚地重述用户的任务，以确保完全理解。\n-明确指出需要哪些信息以及可能需要哪些工具或资源。
+            第2步-分解和制定战略：\n-将问题分解为明确定义的子任务。\n-制定至少两种不同的策略或方法来解决问题，以确保彻底性。
+            第3步-意图澄清和规划：\n-清楚地表达用户请求背后的意图。\n-从步骤2中选择最合适的策略，根据与用户意图和任务约束的一致性清楚地证明你的选择。\n-制定详细的分步行动计划，概述解决问题所需的行动顺序。
+            步骤4-执行行动计划：
+            对于每个计划步骤，记录：\n1.**标题**：概括步骤的简明标题。\n2.**行动**：以第一人称明确说明你的下一个行动（“我会……”）。\n3.**结果**：使用必要的工具执行行动，并提供结果的简明摘要。\n4.**推理**：清楚地解释你的理由，包括：
+            -必要性：为什么需要采取这一行动。\n-注意事项：强调关键考虑因素、潜在挑战和缓解策略。\n-进展：这一步如何从逻辑上遵循或建立在之前的行动之上。\n-假设：明确说明所做的任何假设，并证明其有效性。
+            5.**下一步行动**：从以下选项中明确选择下一步：
+            -**继续**：如果需要进一步的步骤。\n-**验证**：当你得到一个潜在的答案时，表明它已经准备好进行验证。\n-**最终答案**：只有当您自信地验证了解决方案时。\n-**重置**：如果发现严重错误或不正确的结果，请立即重新开始分析。
+            6.**置信度分数**：提供一个数字置信度分数（0.0-1.0），表明您对步骤的正确性及其结果的确定性。
+            步骤5-验证（在最终确定答案之前必须进行）：
+            -通过以下方式明确验证您的解决方案：\n-与替代方法进行交叉验证（在步骤2中开发）。\n-使用其他可用工具或方法独立确认准确性。\n-清楚地记录验证结果和所选验证方法背后的推理。\n-如果验证失败或出现差异，明确指出错误，重置分析，并相应地修改计划。
+            第6步-提供最终答案：
+            -一旦经过彻底验证并充满信心，就可以清晰简洁地交付您的解决方案。\n-简要重述你的答案如何满足用户的初衷并解决所述任务。
+            一般操作指南：
+            -确保您的分析保持不变：
+            -**完成**：解决任务的所有要素。\n-**全面**：探索不同的观点并预测潜在的结果。\n-**逻辑**：保持所有步骤之间的连贯性。\n-**可操作**：提出明确可执行的步骤和行动。\n-**富有洞察力**：在适用的情况下提供创新和独特的视角。
+            -始终通过立即重置或修改步骤来明确处理错误和失误。\n-严格遵守最小{self.min_steps}和最大{self.max_steps}步数，以确保有效的任务解决。
+            -主动毫不犹豫地执行必要的工具，清楚地记录工具的使用情况。'''), tools=tools, show_tool_calls=False,
+                              response_model=ReasoningSteps, use_json_mode=self.use_json_mode, monitoring=self.monitoring,
+                              telemetry=self.telemetry, debug_mode=self.debug_mode)
+            self.reasoning_agent.model.show_tool_calls = False
 
     def set_agent_id(self) -> str:
         if self.agent_id is None:
@@ -549,7 +468,13 @@ class Agent:
                 self.run_input = message
         elif messages is not None:
             self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
-        self._log_agent_run()
+        self.set_monitoring()
+        if self.telemetry or self.monitoring:
+            try:
+                run_data = self._create_run_data()
+                agent_session: AgentSession = self.agent_session or self.get_agent_session()
+            except Exception as e:
+                print(f'Could not create agent event: {e}')
         print(f'Agent Run End: {self.run_response.run_id}')
         if self.stream_intermediate_steps:
             yield self.create_run_response(content=self.run_response.content, event=RunEvent.run_completed)
@@ -613,21 +538,6 @@ class Agent:
             raise Exception(f'{num_attempts}次后失败')
 
     async def _arun(self, message: Optional[Union[str, List, Dict, Message]] = None, *, stream: bool = False, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, messages: Optional[Sequence[Union[Dict, Message]]] = None, stream_intermediate_steps: bool = False, **kwargs: Any) -> AsyncIterator[RunResponse]:
-        """运行代理并生成RunResponse。
-        步骤：
-        1.让代理人做好跑步准备
-        2.更新模型并解析上下文
-        3.从存储中读取现有会话
-        4.准备跑步信息
-        5.如果启用推理，则说明任务的原因
-        6.通过生成RunStarted事件来启动Run
-        7.从模型生成响应（包括运行函数调用）
-        8.更新RunResponse
-        9.更新代理内存
-        10.计算会话度量
-        11.将会话保存到存储
-        12.如果设置了Save_response_to_file，则将输出保存到文件
-        """
         self.initialize_agent()
         self.memory = cast(AgentMemory, self.memory)
         self.stream = self.stream or (stream and self.is_streamable)
@@ -807,7 +717,14 @@ class Agent:
                 self.run_input = message
         elif messages is not None:
             self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
-        await self._alog_agent_run()
+        self.set_monitoring()
+        if self.telemetry or self.monitoring:
+            try:
+                run_data = self._create_run_data()
+                agent_session: AgentSession = self.agent_session or self.get_agent_session()
+            except Exception as e:
+                print(f'Could not create agent event: {e}')
+
         print(f'Agent Run End: {self.run_response.run_id}')
         if self.stream_intermediate_steps:
             yield self.create_run_response(content=self.run_response.content, event=RunEvent.run_completed)
@@ -1037,7 +954,7 @@ class Agent:
         if self.session_state is not None and len(self.session_state) > 0:
             session_data['session_state'] = self.session_state
         if self.session_metrics is not None:
-            session_data['session_metrics'] = asdict(self.session_metrics) if self.session_metrics is not None else None
+            session_data['session_metrics'] = self.session_metrics.__dict__ if self.session_metrics is not None else None
         if self.team_data is not None:
             session_data['team_data'] = self.team_data
         if self.images is not None:
@@ -1730,7 +1647,7 @@ class Agent:
         assistant_message_role = self.model.assistant_message_role if self.model is not None else 'assistant'
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None:
-                for k, v in asdict(m.metrics).items():
+                for k, v in m.metrics.__dict__.items():
                     if k == 'timer':
                         continue
                     if v is not None:
@@ -1840,178 +1757,101 @@ class Agent:
     def reason(self, run_messages: RunMessages) -> Iterator[RunResponse]:
         if self.stream_intermediate_steps:
             yield self.create_run_response(content='Reasoning started', event=RunEvent.reasoning_started)
-        use_default_reasoning = False
-        reasoning_model: Optional[Model] = self.reasoning_model
-        reasoning_model_provided = reasoning_model is not None
-        if reasoning_model is None and self.model is not None:
-            reasoning_model = self.model.__class__(id=self.model.id)
-        if reasoning_model is None:
-            print('推理错误。推理模型为无，继续常规会话...')
+        ds_reasoning_message: Optional[Message] = get_deepseek_reasoning(reasoning_agent=self.reasoning_agent, messages=run_messages.get_input_messages())
+        if ds_reasoning_message is None:
+            print('推理错误。推理反应为无，继续常规会话...')
             return
-        if reasoning_model_provided:
-            if reasoning_model.__class__.__name__ == 'DeepSeek' and reasoning_model.id.lower() == 'deepseek-reasoner':
-                ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(reasoning_model=reasoning_model, monitoring=self.monitoring)
-                print('Starting DeepSeek Reasoning')
-                ds_reasoning_message: Optional[Message] = get_deepseek_reasoning(reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages())
-                if ds_reasoning_message is None:
-                    print('推理错误。推理反应为无，继续常规会话...')
-                    return
-                run_messages.messages.append(ds_reasoning_message)
-                self.update_run_response_with_reasoning(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)], reasoning_agent_messages=[ds_reasoning_message])
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)]), event=RunEvent.reasoning_completed)
-            elif 'deepseek-r1' in reasoning_model.id.lower():
-                openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(reasoning_model=reasoning_model, monitoring=self.monitoring)
-                print('Starting OpenAI Reasoning')
-                openai_reasoning_message: Optional[Message] = get_openai_reasoning(reasoning_agent=openai_reasoning_agent, messages=run_messages.get_input_messages())
-                if openai_reasoning_message is None:
-                    print('推理错误。推理反应为无，继续常规会话...')
-                    return
-                run_messages.messages.append(openai_reasoning_message)
-                self.update_run_response_with_reasoning(reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)], reasoning_agent_messages=[openai_reasoning_message])
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)]), event=RunEvent.reasoning_completed)
-            else:
-                print(f'Reasoning model: {reasoning_model.__class__.__name__} 不是本地推理模型，默认为手动思维链推理')
-                use_default_reasoning = True
-        else:
-            use_default_reasoning = True
-        if use_default_reasoning:
-            reasoning_agent: Optional[Agent] = self.reasoning_agent
-            if reasoning_agent is None:
-                reasoning_agent = get_default_reasoning_agent(reasoning_model=reasoning_model, min_steps=self.reasoning_min_steps, max_steps=self.reasoning_max_steps, tools=self.tools, use_json_mode=self.use_json_mode, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode)
-            if reasoning_agent is None:
-                print('推理错误。推理代理为无，继续常规会话...')
-                return
-            if reasoning_agent.response_model is not None and not isinstance(reasoning_agent.response_model, type):
-                if not issubclass(reasoning_agent.response_model, ReasoningSteps):
-                    print('推理代理响应模型应为“推理步骤”，继续定期会话...')
-                return
-            reasoning_agent.show_tool_calls = False
-            reasoning_agent.model.show_tool_calls = False
-            step_count = 1
-            next_action = NextAction.CONTINUE
-            reasoning_messages: List[Message] = []
-            all_reasoning_steps: List[ReasoningStep] = []
-            print('Starting Reasoning')
-            while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
-                print(f'Step {step_count}')
-                step_count += 1
-                try:
-                    reasoning_agent_response: RunResponse = reasoning_agent.run(messages=run_messages.get_input_messages())
-                    if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
-                        print('推理错误。推理响应为空，继续常规会话...')
-                        break
-                    if reasoning_agent_response.content.reasoning_steps is None:
-                        print('推理错误。推理步骤为空，继续常规会话...')
-                        break
-                    reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
-                    all_reasoning_steps.extend(reasoning_steps)
-                    if self.stream_intermediate_steps:
-                        for reasoning_step in reasoning_steps:
-                            yield self.create_run_response(content=reasoning_step, content_type=reasoning_step.__class__.__name__, event=RunEvent.reasoning_step)
-                    first_assistant_index = next((i for i, m in enumerate(reasoning_agent_response.messages) if m.role == 'assistant'), len(reasoning_agent_response.messages))
-                    reasoning_messages = reasoning_agent_response.messages[first_assistant_index:]
-                    self.update_run_response_with_reasoning(reasoning_steps=reasoning_steps, reasoning_agent_messages=reasoning_agent_response.messages)
-                    next_action = get_next_action(reasoning_steps[-1])
-                    if next_action == NextAction.FINAL_ANSWER:
-                        break
-                except Exception as e:
-                    print(f'Reasoning error: {e}')
+        run_messages.messages.append(ds_reasoning_message)
+        self.update_run_response_with_reasoning(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)], reasoning_agent_messages=[ds_reasoning_message])
+        if self.stream_intermediate_steps:
+            yield self.create_run_response(content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)]), event=RunEvent.reasoning_completed)
+        reasoning_agent: Optional[Agent] = self.reasoning_agent
+        reasoning_agent.show_tool_calls = False
+        reasoning_agent.model.show_tool_calls = False
+        step_count = 1
+        next_action = NextAction.CONTINUE
+        reasoning_messages: List[Message] = []
+        all_reasoning_steps: List[ReasoningStep] = []
+        print('Starting Reasoning')
+        while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
+            print(f'Step {step_count}')
+            step_count += 1
+            try:
+                reasoning_agent_response: RunResponse = reasoning_agent.run(messages=run_messages.get_input_messages())
+                if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
+                    print('推理错误。推理响应为空，继续常规会话...')
                     break
-            print(f'Total Reasoning steps: {len(all_reasoning_steps)}')
-            print('Reasoning finished')
-            update_messages_with_reasoning(run_messages=run_messages, reasoning_messages=reasoning_messages)
-            if self.stream_intermediate_steps:
-                yield self.create_run_response(content=ReasoningSteps(reasoning_steps=all_reasoning_steps), content_type=ReasoningSteps.__class__.__name__, event=RunEvent.reasoning_completed)
+                if reasoning_agent_response.content.reasoning_steps is None:
+                    print('推理错误。推理步骤为空，继续常规会话...')
+                    break
+                reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
+                all_reasoning_steps.extend(reasoning_steps)
+                if self.stream_intermediate_steps:
+                    for reasoning_step in reasoning_steps:
+                        yield self.create_run_response(content=reasoning_step, content_type=reasoning_step.__class__.__name__, event=RunEvent.reasoning_step)
+                first_assistant_index = next((i for i, m in enumerate(reasoning_agent_response.messages) if m.role == 'assistant'), len(reasoning_agent_response.messages))
+                reasoning_messages = reasoning_agent_response.messages[first_assistant_index:]
+                self.update_run_response_with_reasoning(reasoning_steps=reasoning_steps, reasoning_agent_messages=reasoning_agent_response.messages)
+                next_action = get_next_action(reasoning_steps[-1])
+                if next_action == NextAction.FINAL_ANSWER:
+                    break
+            except Exception as e:
+                print(f'Reasoning error: {e}')
+                break
+        print(f'Total Reasoning steps: {len(all_reasoning_steps)}\nReasoning finished')
+        update_messages_with_reasoning(run_messages=run_messages, reasoning_messages=reasoning_messages)
+        if self.stream_intermediate_steps:
+            yield self.create_run_response(content=ReasoningSteps(reasoning_steps=all_reasoning_steps), content_type=ReasoningSteps.__class__.__name__, event=RunEvent.reasoning_completed)
                 
     async def areason(self, run_messages: RunMessages) -> Any:
         if self.stream_intermediate_steps:
             yield self.create_run_response(content='Reasoning started', event=RunEvent.reasoning_started)
-        use_default_reasoning = False
-        reasoning_model: Optional[Model] = self.reasoning_model
-        reasoning_model_provided = reasoning_model is not None
-        if reasoning_model is None and self.model is not None:
-            reasoning_model = self.model.__class__(id=self.model.id)
-        if reasoning_model is None:
-            print('推理错误。推理模型为无，继续常规会话...')
+        ds_reasoning_message: Optional[Message] = await aget_deepseek_reasoning(reasoning_agent=self.reasoning_agent, messages=run_messages.get_input_messages())
+        if ds_reasoning_message is None:
+            print('推理错误。推理反应为无，继续常规会话...')
             return
-        if reasoning_model_provided:
-            if reasoning_model.__class__.__name__ == 'DeepSeek' and reasoning_model.id == 'deepseek-reasoner':
-                ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(reasoning_model=reasoning_model, monitoring=self.monitoring)
-                print('Starting DeepSeek Reasoning')
-                ds_reasoning_message: Optional[Message] = await aget_deepseek_reasoning(reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages())
-                if ds_reasoning_message is None:
-                    print('推理错误。推理反应为无，继续常规会话...')
-                    return
-                run_messages.messages.append(ds_reasoning_message)
-                self.update_run_response_with_reasoning(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)], reasoning_agent_messages=[ds_reasoning_message])
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)]), event=RunEvent.reasoning_completed)
-            elif 'deepseek' in reasoning_model.id.lower():
-                openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(reasoning_model=reasoning_model, monitoring=self.monitoring)
-                print('Starting OpenAI Reasoning')
-                openai_reasoning_message: Optional[Message] = await aget_openai_reasoning(reasoning_agent=openai_reasoning_agent, messages=run_messages.get_input_messages())
-                if openai_reasoning_message is None:
-                    print('推理错误。推理反应为无，继续常规会话...')
-                    return
-                run_messages.messages.append(openai_reasoning_message)
-                self.update_run_response_with_reasoning(reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)], reasoning_agent_messages=[openai_reasoning_message])
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)]), event=RunEvent.reasoning_completed)
-            else:
-                print(f'Reasoning model: {reasoning_model.__class__.__name__} 不是本地推理模型，默认为手动思维链推理')
-                use_default_reasoning = True
-        else:
-            use_default_reasoning = True
-        if use_default_reasoning:
-            reasoning_agent: Optional[Agent] = self.reasoning_agent
-            if reasoning_agent is None:
-                reasoning_agent = get_default_reasoning_agent(reasoning_model=reasoning_model, min_steps=self.reasoning_min_steps, max_steps=self.reasoning_max_steps, tools=self.tools, use_json_mode=self.use_json_mode, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode)
-            if reasoning_agent is None:
-                print('推理错误。推理代理为无，继续常规会话...')
-                return
-            if reasoning_agent.response_model is not None and not isinstance(reasoning_agent.response_model, type):
-                if not issubclass(reasoning_agent.response_model, ReasoningSteps):
-                    print('推理代理响应模型应为“ReasoningSteps”，继续定期会话...')
-                return
-            reasoning_agent.show_tool_calls = False
-            reasoning_agent.model.show_tool_calls = False
-            step_count = 1
-            next_action = NextAction.CONTINUE
-            reasoning_messages: List[Message] = []
-            all_reasoning_steps: List[ReasoningStep] = []
-            print('Starting Reasoning')
-            while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
-                print(f'Step {step_count}')
-                step_count += 1
-                try:
-                    reasoning_agent_response: RunResponse = await reasoning_agent.arun(messages=run_messages.get_input_messages())
-                    if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
-                        print('推理错误。推理响应为空，继续常规会话...')
-                        break
-                    if reasoning_agent_response.content.reasoning_steps is None:
-                        print('推理错误。推理步骤为空，继续常规会话n...')
-                        break
-                    reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
-                    all_reasoning_steps.extend(reasoning_steps)
-                    if self.stream_intermediate_steps:
-                        for reasoning_step in reasoning_steps:
-                            yield self.create_run_response(content=reasoning_step, content_type=reasoning_step.__class__.__name__, event=RunEvent.reasoning_step)
-                    first_assistant_index = next((i for i, m in enumerate(reasoning_agent_response.messages) if m.role == 'assistant'), len(reasoning_agent_response.messages))
-                    reasoning_messages = reasoning_agent_response.messages[first_assistant_index:]
-                    self.update_run_response_with_reasoning(reasoning_steps=reasoning_steps, reasoning_agent_messages=reasoning_agent_response.messages)
-                    next_action = get_next_action(reasoning_steps[-1])
-                    if next_action == NextAction.FINAL_ANSWER:
-                        break
-                except Exception as e:
-                    print(f'Reasoning error: {e}')
+        run_messages.messages.append(ds_reasoning_message)
+        self.update_run_response_with_reasoning(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)], reasoning_agent_messages=[ds_reasoning_message])
+        if self.stream_intermediate_steps:
+            yield self.create_run_response(content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)]), event=RunEvent.reasoning_completed)
+        reasoning_agent: Optional[Agent] = self.reasoning_agent
+        reasoning_agent.show_tool_calls = False
+        reasoning_agent.model.show_tool_calls = False
+        step_count = 1
+        next_action = NextAction.CONTINUE
+        reasoning_messages: List[Message] = []
+        all_reasoning_steps: List[ReasoningStep] = []
+        print('Starting Reasoning')
+        while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
+            print(f'Step {step_count}')
+            step_count += 1
+            try:
+                reasoning_agent_response: RunResponse = await reasoning_agent.arun(messages=run_messages.get_input_messages())
+                if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
+                    print('推理错误。推理响应为空，继续常规会话...')
                     break
-            print(f'Total Reasoning steps: {len(all_reasoning_steps)}')
-            print('Reasoning finished')
-            update_messages_with_reasoning(run_messages=run_messages, reasoning_messages=reasoning_messages)
-            if self.stream_intermediate_steps:
-                yield self.create_run_response(content=ReasoningSteps(reasoning_steps=all_reasoning_steps), content_type=ReasoningSteps.__class__.__name__, event=RunEvent.reasoning_completed)
+                if reasoning_agent_response.content.reasoning_steps is None:
+                    print('推理错误。推理步骤为空，继续常规会话n...')
+                    break
+                reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
+                all_reasoning_steps.extend(reasoning_steps)
+                if self.stream_intermediate_steps:
+                    for reasoning_step in reasoning_steps:
+                        yield self.create_run_response(content=reasoning_step, content_type=reasoning_step.__class__.__name__, event=RunEvent.reasoning_step)
+                first_assistant_index = next((i for i, m in enumerate(reasoning_agent_response.messages) if m.role == 'assistant'), len(reasoning_agent_response.messages))
+                reasoning_messages = reasoning_agent_response.messages[first_assistant_index:]
+                self.update_run_response_with_reasoning(reasoning_steps=reasoning_steps, reasoning_agent_messages=reasoning_agent_response.messages)
+                next_action = get_next_action(reasoning_steps[-1])
+                if next_action == NextAction.FINAL_ANSWER:
+                    break
+            except Exception as e:
+                print(f'Reasoning error: {e}')
+                break
+        print(f'Total Reasoning steps: {len(all_reasoning_steps)}')
+        print('Reasoning finished')
+        update_messages_with_reasoning(run_messages=run_messages, reasoning_messages=reasoning_messages)
+        if self.stream_intermediate_steps:
+            yield self.create_run_response(content=ReasoningSteps(reasoning_steps=all_reasoning_steps), content_type=ReasoningSteps.__class__.__name__, event=RunEvent.reasoning_completed)
 
     def get_chat_history(self, num_chats: Optional[int] = None) -> str:
         history: List[Dict[str, Any]] = []
@@ -2112,26 +1952,6 @@ class Agent:
         if self.monitoring:
             run_data.update({'run_input': self.run_input, 'run_response': self.run_response.to_dict(), 'run_response_format': run_response_format})
         return run_data
-
-    def _log_agent_run(self) -> None:
-        self.set_monitoring()
-        if not self.telemetry and not self.monitoring:
-            return
-        try:
-            run_data = self._create_run_data()
-            agent_session: AgentSession = self.agent_session or self.get_agent_session()
-        except Exception as e:
-            print(f'Could not create agent event: {e}')
-
-    async def _alog_agent_run(self) -> None:
-        self.set_monitoring()
-        if not self.telemetry and not self.monitoring:
-            return
-        try:
-            run_data = self._create_run_data()
-            agent_session: AgentSession = self.agent_session or self.get_agent_session()
-        except Exception as e:
-            print(f'Could not create agent event: {e}')
 
     def print_response(self, message: Optional[Union[List, Dict, str, Message]] = None, *, messages: Optional[List[Union[Dict, Message]]] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, stream: bool = False, markdown: bool = False, show_message: bool = True, show_reasoning: bool = True, show_full_reasoning: bool = False, console: Optional[Any] = None, tags_to_include_in_markdown: Set[str] = {'think', 'thinking'}, **kwargs: Any) -> None:
         if markdown:
@@ -2303,176 +2123,6 @@ class Agent:
                 panels = [p for p in panels if not isinstance(p, Status)]
                 live_log.update(Group(*panels))
 
-    async def aprint_response(self, message: Optional[Union[List, Dict, str, Message]] = None, *, messages: Optional[List[Union[Dict, Message]]] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, stream: bool = False, markdown: bool = False, show_message: bool = True, show_reasoning: bool = True, show_full_reasoning: bool = False, console: Optional[Any] = None, tags_to_include_in_markdown: Set[str] = {'think', 'thinking'}, **kwargs: Any) -> None:
-        if markdown:
-            self.markdown = True
-        if self.response_model is not None:
-            self.markdown = False
-            stream = False
-        if stream:
-            _response_content: str = ''
-            _response_thinking: str = ''
-            reasoning_steps: List[ReasoningStep] = []
-            with Live(console=console) as live_log:
-                status = Status('Thinking...', spinner='aesthetic', speed=0.4, refresh_per_second=10)
-                live_log.update(status)
-                response_timer = Timer()
-                response_timer.start()
-                render = False
-                panels = [status]
-                if message and show_message:
-                    render = True
-                    message_content = get_text_from_message(message)
-                    message_panel = create_panel(content=Text(message_content, style='green'), title='Message', border_style='cyan')
-                    panels.append(message_panel)
-                if render:
-                    live_log.update(Group(*panels))
-                async for resp in await self.arun(message=message, messages=messages, audio=audio, images=images, videos=videos, files=files, stream=True, **kwargs):
-                    if isinstance(resp, RunResponse):
-                        if resp.event == RunEvent.run_response:
-                            if isinstance(resp.content, str):
-                                _response_content += resp.content
-                            if resp.thinking is not None:
-                                _response_thinking += resp.thinking
-                        if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
-                            reasoning_steps = resp.extra_data.reasoning_steps
-                    response_content_stream: Union[str, Markdown] = _response_content
-                    if self.markdown:
-                        escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
-                        response_content_stream = Markdown(escaped_content)
-                    panels = [status]
-                    if message and show_message:
-                        render = True
-                        message_content = get_text_from_message(message)
-                        message_panel = create_panel(content=Text(message_content, style='green'), title='Message', border_style='cyan')
-                        panels.append(message_panel)
-                    if render:
-                        live_log.update(Group(*panels))
-                    if len(reasoning_steps) > 0 and (show_reasoning or show_full_reasoning):
-                        render = True
-                        for i, step in enumerate(reasoning_steps, 1):
-                            step_content = Text.assemble()
-                            if step.title is not None:
-                                step_content.append(f'{step.title}\n', 'bold')
-                            if step.action is not None:
-                                step_content.append(f'{step.action}\n', 'dim')
-                            if step.result is not None:
-                                step_content.append(Text.from_markup(step.result, style='dim'))
-                            if show_full_reasoning:
-                                if step.reasoning is not None:
-                                    step_content.append(Text.from_markup(f'\n[bold]Reasoning:[/bold] {step.reasoning}', style='dim'))
-                                if step.confidence is not None:
-                                    step_content.append(Text.from_markup(f'\n[bold]Confidence:[/bold] {step.confidence}', style='dim'))
-                            reasoning_panel = create_panel(content=step_content, title=f'Reasoning step {i}', border_style='green')
-                            panels.append(reasoning_panel)
-                    if render:
-                        live_log.update(Group(*panels))
-                    if len(_response_thinking) > 0:
-                        render = True
-                        thinking_panel = create_panel(content=Text(_response_thinking), title=f'Thinking ({response_timer.elapsed:.1f}s)', border_style='green')
-                        panels.append(thinking_panel)
-                    if render:
-                        live_log.update(Group(*panels))
-                    if self.show_tool_calls and self.run_response is not None and self.run_response.formatted_tool_calls:
-                        render = True
-                        tool_calls_content = Text()
-                        for tool_call in self.run_response.formatted_tool_calls:
-                            tool_calls_content.append(f'• {tool_call}\n')
-                        tool_calls_panel = create_panel(content=tool_calls_content.plain.rstrip(), title='Tool Calls', border_style='yellow')
-                        panels.append(tool_calls_panel)
-                    if len(_response_content) > 0:
-                        render = True
-                        response_panel = create_panel(content=response_content_stream, title=f'Response ({response_timer.elapsed:.1f}s)', border_style='blue')
-                        panels.append(response_panel)
-                    if render:
-                        live_log.update(Group(*panels))
-                    if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
-                        md_content = '\n'.join(f'{i + 1}. [{citation.title or citation.url}]({citation.url})'
-                            for i, citation in enumerate(resp.citations.urls)
-                            if citation.url)
-                        if md_content:
-                            citations_panel = create_panel(content=Markdown(md_content), title='Citations', border_style='green')
-                            panels.append(citations_panel)
-                            live_log.update(Group(*panels))
-                response_timer.stop()
-                panels = [p for p in panels if not isinstance(p, Status)]
-                live_log.update(Group(*panels))
-        else:
-            with Live(console=console) as live_log:
-                status = Status('Thinking...', spinner='aesthetic', speed=0.4, refresh_per_second=10)
-                live_log.update(status)
-                response_timer = Timer()
-                response_timer.start()
-                panels = [status]
-                if message and show_message:
-                    message_content = get_text_from_message(message)
-                    message_panel = create_panel(content=Text(message_content, style='green'), title='Message', border_style='cyan')
-                    panels.append(message_panel)
-                    live_log.update(Group(*panels))
-                run_response = await self.arun(message=message, messages=messages, audio=audio, images=images, videos=videos, files=files, stream=False, **kwargs)
-                response_timer.stop()
-                reasoning_steps = []
-                if isinstance(run_response, RunResponse) and run_response.extra_data is not None and run_response.extra_data.reasoning_steps is not None:
-                    reasoning_steps = run_response.extra_data.reasoning_steps
-                if len(reasoning_steps) > 0 and show_reasoning:
-                    for i, step in enumerate(reasoning_steps, 1):
-                        step_content = Text.assemble()
-                        if step.title is not None:
-                            step_content.append(f'{step.title}\n', 'bold')
-                        if step.action is not None:
-                            step_content.append(f'{step.action}\n', 'dim')
-                        if step.result is not None:
-                            step_content.append(Text.from_markup(step.result, style='dim'))
-                        if show_full_reasoning:
-                            if step.reasoning is not None:
-                                step_content.append(Text.from_markup(f'\n[bold]Reasoning:[/bold] {step.reasoning}', style='dim'))
-                            if step.confidence is not None:
-                                step_content.append(Text.from_markup(f'\n[bold]Confidence:[/bold] {step.confidence}', style='dim'))
-                        reasoning_panel = create_panel(content=step_content, title=f'Reasoning step {i}', border_style='green')
-                        panels.append(reasoning_panel)
-                    live_log.update(Group(*panels))
-                if isinstance(run_response, RunResponse) and run_response.thinking is not None:
-                    thinking_panel = create_panel(content=Text(run_response.thinking), title=f'Thinking ({response_timer.elapsed:.1f}s)', border_style='green')
-                    panels.append(thinking_panel)
-                    live_log.update(Group(*panels))
-                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
-                    tool_calls_content = Text()
-                    for tool_call in run_response.formatted_tool_calls:
-                        tool_calls_content.append(f'• {tool_call}\n')
-                    tool_calls_panel = create_panel(content=tool_calls_content.plain.rstrip(), title='Tool Calls', border_style='yellow')
-                    panels.append(tool_calls_panel)
-                    live_log.update(Group(*panels))
-                response_content_batch: Union[str, JSON, Markdown] = ''
-                if isinstance(run_response, RunResponse):
-                    if isinstance(run_response.content, str):
-                        if self.markdown:
-                            escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
-                            response_content_batch = Markdown(escaped_content)
-                        else:
-                            response_content_batch = run_response.get_content_as_string(indent=4)
-                    elif self.response_model is not None and isinstance(run_response.content, BaseModel):
-                        try:
-                            response_content_batch = JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
-                        except Exception as e:
-                            print(f'Failed to convert response to JSON: {e}')
-                    else:
-                        try:
-                            response_content_batch = JSON(json.dumps(run_response.content), indent=4)
-                        except Exception as e:
-                            print(f'Failed to convert response to JSON: {e}')
-                response_panel = create_panel(content=response_content_batch, title=f'Response ({response_timer.elapsed:.1f}s)', border_style='blue')
-                panels.append(response_panel)
-                if isinstance(run_response, RunResponse) and run_response.citations is not None and run_response.citations.urls is not None:
-                    md_content = '\n'.join(f'{i + 1}. [{citation.title or citation.url}]({citation.url})'
-                        for i, citation in enumerate(run_response.citations.urls)
-                        if citation.url)
-                    if md_content:
-                        citations_panel = create_panel(content=Markdown(md_content), title='Citations', border_style='green')
-                        panels.append(citations_panel)
-                        live_log.update(Group(*panels))
-                panels = [p for p in panels if not isinstance(p, Status)]
-                live_log.update(Group(*panels))
-
     def cli_app(self, message: Optional[str] = None, user: str = 'User', emoji: str = ':sunglasses:', stream: bool = False, markdown: bool = False, exit_on: Optional[List[str]] = None, **kwargs: Any) -> None:
         if message:
             self.print_response(message=message, stream=stream, markdown=markdown, **kwargs)
@@ -2482,11 +2132,6 @@ class Agent:
             if message in _exit_on:
                 break
             self.print_response(message=message, stream=stream, markdown=markdown, **kwargs)
-
-
-class RunCancelledException(Exception):
-    def __init__(self, message: str = 'Operation cancelled by user'):
-        super().__init__(message)
 
 
 class ModelProviderError(Exception):
@@ -2518,11 +2163,6 @@ def escape_markdown_tags(content: str, tags: Set[str]) -> str:
         escaped_content = escaped_content.replace(f'<{tag}>', f'&lt;{tag}&gt;')
         escaped_content = escaped_content.replace(f'</{tag}>', f'&lt;/{tag}&gt;')
     return escaped_content
-
-
-def check_if_run_cancelled(run_response: Union[RunResponse, TeamRunResponse]):
-    if run_response.event == RunEvent.run_cancelled:
-        raise RunCancelledException()
 
 
 def update_run_response_with_reasoning(run_response: Union[RunResponse, TeamRunResponse], reasoning_steps: List[ReasoningStep], reasoning_agent_messages: List[Message]) -> None:

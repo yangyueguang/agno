@@ -180,21 +180,21 @@ class Ollama(Model):
         return model_response
 
 
-@dataclass
 class ToolCall:
-    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    response_usage: Optional[Mapping[str, Any]] = None
-    response_is_tool_call: bool = field(default=False)
-    is_closing_tool_call_tag: bool = field(default=False)
-    tool_calls_counter: int = field(default=0)
-    tool_call_content: str = field(default='')
+    def __init__(self, tool_calls: List[Dict[str, Any]] = None, response_usage: Optional[Mapping[str, Any]] = None, response_is_tool_call=False, is_closing_tool_call_tag=False, tool_calls_counter=0, tool_call_content=''):
+        self.tool_calls = tool_calls or []
+        self.response_usage = response_usage
+        self.response_is_tool_call = response_is_tool_call
+        self.is_closing_tool_call_tag = is_closing_tool_call_tag
+        self.tool_calls_counter = tool_calls_counter
+        self.tool_call_content = tool_call_content
 
 
-@dataclass
 class OllamaTools(Ollama):
-    id: str = 'llama3.2'
-    name: str = 'OllamaTools'
-    provider: str = 'Ollama'
+    def __init__(self, id='llama3.2', name='OllamaTools', provider='Ollama'):
+        self.id = id
+        self.name = name
+        self.provider = provider
 
     @property
     def request_kwargs(self) -> Dict[str, Any]:

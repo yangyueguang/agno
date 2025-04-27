@@ -32,29 +32,8 @@ def nested_model_dump(value):
     return value
 
 
-@dataclass(init=False)
 class Workflow:
-    name: Optional[str] = None
-    workflow_id: Optional[str] = None
-    description: Optional[str] = None
-    user_id: Optional[str] = None
-    session_id: Optional[str] = None
-    session_name: Optional[str] = None
-    session_state: Dict[str, Any] = field(default_factory=dict)
-    memory: Optional[WorkflowMemory] = None
-    storage: Optional[Storage] = None
-    extra_data: Optional[Dict[str, Any]] = None
-    debug_mode: bool = False
-    monitoring: bool = field(default_factory=lambda: os.getenv('AGNO_MONITOR', 'false').lower() == 'true')
-    telemetry: bool = field(default_factory=lambda: os.getenv('AGNO_TELEMETRY', 'true').lower() == 'true')
-    run_id: Optional[str] = None
-    run_input: Optional[Dict[str, Any]] = None
-    run_response: Optional[RunResponse] = None
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
-
-    def __init__(self, *, name: Optional[str] = None, workflow_id: Optional[str] = None, description: Optional[str] = None, user_id: Optional[str] = None, session_id: Optional[str] = None, session_name: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None, memory: Optional[WorkflowMemory] = None, storage: Optional[Storage] = None, extra_data: Optional[Dict[str, Any]] = None, debug_mode: bool = False, monitoring: bool = False, telemetry: bool = True):
+    def __init__(self, name: Optional[str] = None, workflow_id: Optional[str] = None, description: Optional[str] = None, user_id: Optional[str] = None, session_id: Optional[str] = None, session_name: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None, memory: Optional[WorkflowMemory] = None, storage: Optional[Storage] = None, extra_data: Optional[Dict[str, Any]] = None, debug_mode: bool = False, monitoring: bool = False, telemetry: bool = True):
         self.name = name or self.__class__.__name__
         self.workflow_id = workflow_id
         self.description = description or self.__class__.description
@@ -207,10 +186,9 @@ class Workflow:
             self._run_return_type = None
 
     def update_agent_session_ids(self):
-        for f in fields(self):
-            field_type = f.type
-            if isinstance(field_type, Agent):
-                field_value = getattr(self, f.name)
+        for field_name, value in self.__class__.__dict__.items():
+            if isinstance(value, Agent):
+                field_value = getattr(self, field_name)
                 field_value.session_id = self.session_id
 
     def get_workflow_data(self) -> Dict[str, Any]:

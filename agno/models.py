@@ -10,7 +10,7 @@ from time import time, perf_counter
 from abc import ABC, abstractmethod
 from types import AsyncGeneratorType, GeneratorType
 from agno.tools import AgentRunException, Function, FunctionCall
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pydantic import BaseModel, ConfigDict, Field
 from agno.media import Audio, AudioResponse, File, Image, ImageArtifact, Video
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union, Sequence
@@ -182,7 +182,7 @@ class Message(BaseModel):
         if self.references:
             message_dict['references'] = self.references.model_dump()
         if self.metrics:
-            mdict = asdict(self.metrics)
+            mdict = self.metrics.__dict__
             mdict.pop('timer')
             message_dict['metrics'] = {k: v for k, v in mdict.items() if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)}
             if not message_dict['metrics']:

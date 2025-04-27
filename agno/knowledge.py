@@ -12,14 +12,8 @@ class AgentKnowledge(BaseModel):
     vector_db: Optional[VectorDb] = None
     num_documents: int = 5
     optimize_on: Optional[int] = 1000
-    chunking_strategy: ChunkingStrategy = Field(default_factory=FixedSizeChunking)
+    chunking_strategy: ChunkingStrategy = ChunkingStrategy()
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    @model_validator(mode='after')
-    def update_reader(self) -> 'AgentKnowledge':
-        if self.reader is not None:
-            self.reader.chunking_strategy = self.chunking_strategy
-        return self
 
     @property
     def document_lists(self) -> Iterator[List[Document]]:
@@ -370,15 +364,9 @@ class UrlKnowledge(AgentKnowledge):
 
 class WebsiteKnowledgeBase(AgentKnowledge):
     urls: List[str] = []
-    reader: Optional[WebsiteReader] = None
+    reader: Optional[WebsiteReader] = WebsiteReader(max_depth=3, max_links=10)
     max_depth: int = 3
     max_links: int = 10
-
-    @model_validator(mode='after')
-    def set_reader(self) -> 'WebsiteKnowledgeBase':
-        if self.reader is None:
-            self.reader = WebsiteReader(max_depth=self.max_depth, max_links=self.max_links)
-        return self
 
     @property
     def document_lists(self) -> Iterator[List[Document]]:

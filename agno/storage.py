@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker, Session as SqlSession
 from sqlalchemy.schema import Column, MetaData, Table
 from sqlalchemy.sql.expression import select, text
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import List, Literal, Optional, Any, Dict, Mapping, Optional, Union
 
 
@@ -29,7 +29,7 @@ class AgentSession:
     agent_data: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        return self.__dict__
 
     def telemetry_data(self) -> Dict[str, Any]:
         return {'model': self.agent_data.get('model') if self.agent_data else None, 'created_at': self.created_at, 'updated_at': self.updated_at}
@@ -56,7 +56,7 @@ class TeamSession:
     updated_at: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        return self.__dict__
 
     def telemetry_data(self) -> Dict[str, Any]:
         return {'model': self.team_data.get('model') if self.team_data else None, 'created_at': self.created_at, 'updated_at': self.updated_at}
@@ -82,10 +82,10 @@ class WorkflowSession:
     workflow_data: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        return self.__dict__
 
     def monitoring_data(self) -> Dict[str, Any]:
-        return asdict(self)
+        return self.to_dict()
 
     def telemetry_data(self) -> Dict[str, Any]:
         return {'created_at': self.created_at, 'updated_at': self.updated_at}
@@ -779,7 +779,7 @@ class JsonStorage(Storage):
 
     def upsert(self, session: Session) -> Optional[Session]:
         try:
-            data = asdict(session)
+            data = session.__dict__
             data['updated_at'] = int(time.time())
             if 'created_at' not in data:
                 data['created_at'] = data['updated_at']
