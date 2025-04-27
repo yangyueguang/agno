@@ -1409,12 +1409,11 @@ class Agent:
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> 'Agent':
         excluded_fields = ['agent_session', 'session_name']
         fields_for_new_agent: Dict[str, Any] = {}
-        for f in fields(self):
-            if f.name in excluded_fields:
+        for k, v in self.__class__.__dict__.items():
+            if k in excluded_fields:
                 continue
-            field_value = getattr(self, f.name)
-            if field_value is not None:
-                fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
+            if v is not None:
+                fields_for_new_agent[k] = self._deep_copy_field(k, v)
         if update:
             fields_for_new_agent.update(update)
         new_agent = self.__class__(**fields_for_new_agent)

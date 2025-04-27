@@ -330,13 +330,13 @@ class Workflow:
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> 'Workflow':
         fields_for_new_workflow: Dict[str, Any] = {}
-        for f in fields(self):
-            field_value = getattr(self, f.name)
-            if field_value is not None:
-                if isinstance(field_value, Agent):
-                    fields_for_new_workflow[f.name] = field_value.deep_copy()
+
+        for field_name, value in self.__class__.__dict__.items():
+            if value is not None:
+                if isinstance(value, Agent):
+                    fields_for_new_workflow[field_name] = value.deep_copy()
                 else:
-                    fields_for_new_workflow[f.name] = self._deep_copy_field(f.name, field_value)
+                    fields_for_new_workflow[field_name] = self._deep_copy_field(field_name, value)
         if update:
             fields_for_new_workflow.update(update)
         new_workflow = self.__class__(**fields_for_new_workflow)
