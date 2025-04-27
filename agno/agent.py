@@ -76,9 +76,9 @@ class AgentKnowledge:
             elif u.endswith(('.doc', '.docx')):
                 yield DocxReader().read(file=u)
             elif u.endswith('.pdf'):
-                yield await PDFUrlReader().async_read(url=u)
+                yield PDFUrlReader().read(url=u)
             elif u.endswith('.txt'):
-                yield await TextReader().async_read(file=u)
+                yield TextReader().read(file=u)
             elif u.endswith(('.html', '.xml')):
                 yield URLReader().read(url=u)
             elif u.startswith('http'):
