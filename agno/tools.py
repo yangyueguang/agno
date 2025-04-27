@@ -3,7 +3,15 @@ from typing import Any, Callable, Dict, Optional, Type, TypeVar, get_type_hints,
 from docstring_parser import parse
 from pydantic import BaseModel, Field, validate_call
 from collections import OrderedDict
-
+import json
+import sys
+import shutil
+from pathlib import Path
+from tempfile import gettempdir
+from hashlib import md5
+from time import time
+from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator, iscoroutine, getdoc, signature
+from types import UnionType
 T = TypeVar('T')
 F = TypeVar('F', bound=Callable[..., Any])
 ToolConfig = TypeVar('ToolConfig', bound=Dict[str, Any])
@@ -19,9 +27,7 @@ class AgentRunException(Exception):
 
 
 def is_origin_union_type(origin: Any) -> bool:
-    import sys
     if sys.version_info.minor >= 10:
-        from types import UnionType
         return origin in [Union, UnionType]
     return origin is Union
 
@@ -126,7 +132,6 @@ class Function(BaseModel):
 
     @classmethod
     def from_callable(cls, c: Callable, strict: bool = False) -> 'Function':
-        from inspect import getdoc, isasyncgenfunction, signature
         function_name = c.__name__
         parameters = {'type': 'object', 'properties': {}, 'required': []}
         try:
@@ -158,7 +163,6 @@ class Function(BaseModel):
         return cls(name=function_name, description=get_entrypoint_docstring(entrypoint=c), parameters=parameters, entrypoint=entrypoint)
 
     def process_entrypoint(self, strict: bool = False):
-        from inspect import getdoc, isasyncgenfunction, signature
         if self.skip_entrypoint_processing:
             return
         if self.entrypoint is None:
@@ -227,14 +231,12 @@ class Function(BaseModel):
         return function_info
 
     def get_definition_for_prompt(self) -> Optional[str]:
-        import json
         function_info = self.get_definition_for_prompt_dict()
         if function_info is not None:
             return json.dumps(function_info, indent=2)
         return None
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
-        from hashlib import md5
         copy_entrypoint_args = entrypoint_args.copy()
         if 'agent' in copy_entrypoint_args:
             del copy_entrypoint_args['agent']
@@ -244,17 +246,12 @@ class Function(BaseModel):
         return md5(key_str.encode()).hexdigest()
 
     def _get_cache_file_path(self, cache_key: str) -> str:
-        from pathlib import Path
-        from tempfile import gettempdir
         base_cache_dir = self.cache_dir or Path(gettempdir()) / 'agno_cache'
         func_cache_dir = Path(base_cache_dir) / 'functions' / self.name
         func_cache_dir.mkdir(parents=True, exist_ok=True)
         return str(func_cache_dir / f'{cache_key}.json')
 
     def _get_cached_result(self, cache_file: str) -> Optional[Any]:
-        import json
-        from pathlib import Path
-        from time import time
         cache_path = Path(cache_file)
         if not cache_path.exists():
             return None
@@ -271,8 +268,6 @@ class Function(BaseModel):
         return None
 
     def _save_to_cache(self, cache_file: str, result: Any):
-        import json
-        from time import time
         try:
             with open(cache_file, 'w') as f:
                 json.dump({'timestamp': time(), 'result': result}, f)
@@ -288,7 +283,6 @@ class FunctionCall(BaseModel):
     error: Optional[str] = None
 
     def get_call_str(self) -> str:
-        import shutil
         term_width = shutil.get_terminal_size().columns or 80
         max_arg_len = max(20, (term_width - len(self.function.name) - 4) // 2)
         if self.arguments is None:
@@ -307,7 +301,6 @@ class FunctionCall(BaseModel):
     def _handle_pre_hook(self):
         if self.function.pre_hook is not None:
             try:
-                from inspect import signature
                 pre_hook_args = {}
                 if 'agent' in signature(self.function.pre_hook).parameters:
                     pre_hook_args['agent'] = self.function._agent
@@ -325,7 +318,6 @@ class FunctionCall(BaseModel):
     def _handle_post_hook(self):
         if self.function.post_hook is not None:
             try:
-                from inspect import signature
                 post_hook_args = {}
                 if 'agent' in signature(self.function.post_hook).parameters:
                     post_hook_args['agent'] = self.function._agent
@@ -341,7 +333,6 @@ class FunctionCall(BaseModel):
                 print(e)
 
     def _build_entrypoint_args(self) -> Dict[str, Any]:
-        from inspect import signature
         entrypoint_args = {}
         if 'agent' in signature(self.function.entrypoint).parameters:
             entrypoint_args['agent'] = self.function._agent
@@ -350,7 +341,6 @@ class FunctionCall(BaseModel):
         return entrypoint_args
 
     def execute(self) -> bool:
-        from inspect import isgenerator
         if self.function.entrypoint is None:
             return False
         print(f'Running: {self.get_call_str()}')
@@ -395,7 +385,6 @@ class FunctionCall(BaseModel):
     async def _handle_pre_hook_async(self):
         if self.function.pre_hook is not None:
             try:
-                from inspect import signature
                 pre_hook_args = {}
                 if 'agent' in signature(self.function.pre_hook).parameters:
                     pre_hook_args['agent'] = self.function._agent
@@ -413,7 +402,6 @@ class FunctionCall(BaseModel):
     async def _handle_post_hook_async(self):
         if self.function.post_hook is not None:
             try:
-                from inspect import signature
                 post_hook_args = {}
                 if 'agent' in signature(self.function.post_hook).parameters:
                     post_hook_args['agent'] = self.function._agent
@@ -429,7 +417,6 @@ class FunctionCall(BaseModel):
                 print(e)
 
     async def aexecute(self) -> bool:
-        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
         if self.function.entrypoint is None:
             return False
         print(f'Running: {self.get_call_str()}')
@@ -517,7 +504,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         raise ValueError(f'Invalid tool configuration arguments: {invalid_kwargs}. Valid arguments are: {sorted(VALID_KWARGS)}')
 
     def decorator(func: F) -> Function:
-        from inspect import getdoc, isasyncgenfunction, iscoroutine, iscoroutinefunction
         @wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
@@ -556,7 +542,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
 
 
 def get_entrypoint_docstring(entrypoint: Callable) -> str:
-    from inspect import getdoc
     if isinstance(entrypoint, partial):
         return str(entrypoint)
     doc = getdoc(entrypoint)

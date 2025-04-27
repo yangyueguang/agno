@@ -1,8 +1,11 @@
 import json
+import shutil
 import asyncio
 import collections.abc
 from uuid import uuid4
 from enum import Enum
+from copy import deepcopy
+from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction
 from time import time, perf_counter
 from abc import ABC, abstractmethod
 from types import AsyncGeneratorType, GeneratorType
@@ -192,7 +195,6 @@ class Message(BaseModel):
 
     def log(self, metrics: bool = True, level=None):
         try:
-            import shutil
             terminal_width = shutil.get_terminal_size().columns
         except Exception:
             terminal_width = 80
@@ -813,7 +815,6 @@ class Model(ABC):
             function_call_results.extend(additional_messages)
 
     async def _arun_function_call(self, function_call: FunctionCall) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall]:
-        from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction
         function_call_timer = Timer()
         function_call_timer.start()
         success: Union[bool, AgentRunException] = False
@@ -942,7 +943,6 @@ class Model(ABC):
         self._function_call_stack = None
 
     def __deepcopy__(self, memo: dict):
-        from copy import deepcopy
         cls = self.__class__
         new_model = cls.__new__(cls)
         memo[id(self)] = new_model

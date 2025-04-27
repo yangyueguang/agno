@@ -1,11 +1,11 @@
 import asyncio
-from dataclasses import asdict, dataclass, replace
-from typing import List, Literal, Optional, Sequence, Set, Tuple, Type, Union, cast, overload
+import textwrap
+from inspect import getdoc
 from agno.agent import *
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory import Memory, TeamMemory, TeamRun
 from agno.models import Model, Citations, Message, ModelResponse, ModelResponseEvent, Timer
-from agno.run import NextAction, ReasoningStep, ReasoningSteps, RunMessages, RunEvent, RunResponse, TeamRunResponse, get_default_reasoning_agent, get_default_reasoning_agent, get_deepseek_reasoning, get_next_action, update_messages_with_reasoning, aget_deepseek_reasoning, get_next_action, update_messages_with_reasoning
+from agno.run import NextAction, ReasoningStep, ReasoningSteps, RunMessages, RunEvent, RunResponse, TeamRunResponse, get_deepseek_reasoning, aget_deepseek_reasoning, get_next_action, update_messages_with_reasoning
 from agno.storage import Storage, TeamSession
 from agno.tools import Function, Toolkit
 from functools import partial
@@ -50,7 +50,6 @@ def get_text_from_message(message: Union[List, Dict, str, Message]) -> str:
 
 
 def get_entrypoint_docstring(entrypoint: Callable) -> str:
-    from inspect import getdoc
     if isinstance(entrypoint, partial):
         return str(entrypoint)
     doc = getdoc(entrypoint)
@@ -298,7 +297,6 @@ class Team:
                     self._run(run_response=self.run_response, run_messages=run_messages)
                     return self.run_response
             except ModelProviderError as e:
-                import time
                 print(f'Attempt {attempt + 1}/{num_attempts} failed: {str(e)}')
                 last_exception = e
                 if attempt < num_attempts - 1:
@@ -836,14 +834,6 @@ class Team:
             self._print_response(message=message, console=console, show_message=show_message, show_reasoning=show_reasoning, show_reasoning_verbose=show_reasoning_verbose, tags_to_include_in_markdown=tags_to_include_in_markdown, audio=audio, images=images, videos=videos, files=files, markdown=markdown, **kwargs)
 
     def _print_response(self, message: Optional[Union[List, Dict, str, Message]] = None, console: Optional[Any] = None, show_message: bool = True, show_reasoning: bool = True, show_reasoning_verbose: bool = False, tags_to_include_in_markdown: Optional[Set[str]] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, markdown: bool = False, **kwargs: Any) -> None:
-        import textwrap
-        from rich.console import Group
-        from rich.json import JSON
-        from rich.live import Live
-        from rich.markdown import Markdown
-        from rich.status import Status
-        from rich.text import Text
-
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {'think', 'thinking'}
         with Live(console=console) as live_console:
@@ -959,13 +949,6 @@ class Team:
             live_console.update(Group(*panels))
 
     def _print_response_stream(self, message: Optional[Union[List, Dict, str, Message]] = None, console: Optional[Any] = None, show_message: bool = True, show_reasoning: bool = True, show_reasoning_verbose: bool = False, tags_to_include_in_markdown: Optional[Set[str]] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, markdown: bool = False, stream_intermediate_steps: bool = False, **kwargs: Any) -> None:
-        import textwrap
-        from rich.console import Group
-        from rich.live import Live
-        from rich.markdown import Markdown
-        from rich.status import Status
-        from rich.text import Text
-
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {'think', 'thinking'}
         stream_intermediate_steps = True
@@ -1224,13 +1207,6 @@ class Team:
             await self._aprint_response(message=message, console=console, show_message=show_message, show_reasoning=show_reasoning, show_reasoning_verbose=show_reasoning_verbose, tags_to_include_in_markdown=tags_to_include_in_markdown, audio=audio, images=images, videos=videos, files=files, markdown=markdown, **kwargs)
 
     async def _aprint_response(self, message: Optional[Union[List, Dict, str, Message]] = None, console: Optional[Any] = None, show_message: bool = True, show_reasoning: bool = True, show_reasoning_verbose: bool = False, tags_to_include_in_markdown: Optional[Set[str]] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, markdown: bool = False, **kwargs: Any) -> None:
-        import textwrap
-        from rich.console import Group
-        from rich.json import JSON
-        from rich.live import Live
-        from rich.markdown import Markdown
-        from rich.status import Status
-        from rich.text import Text
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {'think', 'thinking'}
         with Live(console=console) as live_console:
@@ -1345,12 +1321,6 @@ class Team:
             live_console.update(Group(*panels))
 
     async def _aprint_response_stream(self, message: Optional[Union[List, Dict, str, Message]] = None, console: Optional[Any] = None, show_message: bool = True, show_reasoning: bool = True, show_reasoning_verbose: bool = False, tags_to_include_in_markdown: Optional[Set[str]] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, markdown: bool = False, stream_intermediate_steps: bool = False, **kwargs: Any) -> None:
-        import textwrap
-        from rich.console import Group
-        from rich.live import Live
-        from rich.markdown import Markdown
-        from rich.status import Status
-        from rich.text import Text
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {'think', 'thinking'}
         stream_intermediate_steps = True
@@ -1566,7 +1536,6 @@ class Team:
             live_console.update(Group(*final_panels))
 
     def _build_reasoning_step_panel(self, step_idx: int, step: ReasoningStep, show_reasoning_verbose: bool = False, color: str = 'green'):
-        from rich.text import Text
         step_content = Text.assemble()
         if step.title is not None:
             step_content.append(f'{step.title}\n', 'bold')
@@ -1592,8 +1561,6 @@ class Team:
         return entity_id
 
     def _parse_response_content(self, run_response: Union[TeamRunResponse, RunResponse], tags_to_include_in_markdown: Set[str], show_markdown: bool = True) -> Any:
-        from rich.json import JSON
-        from rich.markdown import Markdown
         if isinstance(run_response.content, str):
             if show_markdown:
                 escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
@@ -1612,7 +1579,6 @@ class Team:
                 print(f'Failed to convert response to JSON: {e}')
 
     def cli_app(self, message: Optional[str] = None, user: str = 'User', emoji: str = ':sunglasses:', stream: bool = False, markdown: bool = False, exit_on: Optional[List[str]] = None, **kwargs: Any) -> None:
-        from rich.prompt import Prompt
         if message:
             self.print_response(message=message, stream=stream, markdown=markdown, **kwargs)
         _exit_on = exit_on or ['exit', 'quit', 'bye']
@@ -1827,7 +1793,6 @@ class Team:
         return rr
 
     def _resolve_run_context(self) -> None:
-        from inspect import signature
         print('Resolving context')
         if self.context is not None:
             if isinstance(self.context, dict):
@@ -1850,12 +1815,6 @@ class Team:
 
     def _configure_model(self, show_tool_calls: bool = False) -> None:
         if self.model is None:
-            try:
-                from agno.ollama import Ollama
-            except ModuleNotFoundError as e:
-                print(e)
-                print('Agno agents use `openai` as the default model provider.Please provide a `model` or install `openai`.')
-                exit(1)
             print('Setting default model to OpenAI Chat')
             self.model = Ollama()
         if self.response_model is None:
@@ -1980,7 +1939,6 @@ class Team:
         if self.markdown and self.response_model is None:
             additional_information.append('Use markdown to format your answers.')
         if self.add_datetime_to_instructions:
-            from datetime import datetime
             additional_information.append(f'The current time is {datetime.now()}')
         system_message_content: str = ''
         if self.mode == 'coordinate':
@@ -2057,7 +2015,6 @@ class Team:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
         if self.enable_team_history:
-            from copy import deepcopy
             history: List[Message] = self.memory.get_messages_from_last_n_runs(last_n=self.num_of_interactions_from_history, skip_role='system')
             if len(history) > 0:
                 history_copy = [deepcopy(msg) for msg in history]
@@ -2104,7 +2061,6 @@ class Team:
     def _convert_context_to_string(self, context: Dict[str, Any]) -> str:
         if context is None:
             return ''
-        import json
         try:
             return json.dumps(context, indent=2, default=str)
         except (TypeError, ValueError, OverflowError) as e:
@@ -2124,7 +2080,6 @@ class Team:
                 return str(context)
 
     def _get_json_output_prompt(self) -> str:
-        import json
         json_output_prompt = 'Provide your output as a JSON containing the following fields:'
         if self.response_model is not None:
             if isinstance(self.response_model, str):
@@ -2192,7 +2147,6 @@ class Team:
             self.audio.extend(run_response.audio)
 
     def get_team_history(self, num_chats: Optional[int] = None) -> str:
-        import json
         history: List[Dict[str, Any]] = []
         all_chats = self.memory.get_all_messages()
         if len(all_chats) == 0:
@@ -2266,7 +2220,6 @@ class Team:
                             yield str(e)
                     else:
                         try:
-                            import json
                             yield json.dumps(member_agent_run_response.content, indent=2)
                         except Exception as e:
                             yield str(e)
@@ -2323,7 +2276,6 @@ class Team:
                             return f'Agent {member_name}: Error - {str(e)}'
                     else:
                         try:
-                            import json
                             return f'Agent {member_name}: {json.dumps(response.content, indent=2)}'
                         except Exception as e:
                             return f'Agent {member_name}: Error - {str(e)}'
@@ -2391,7 +2343,6 @@ class Team:
                         yield str(e)
                 else:
                     try:
-                        import json
                         yield json.dumps(member_agent_run_response.content, indent=2)
                     except Exception as e:
                         yield str(e)
@@ -2446,7 +2397,6 @@ class Team:
                         yield str(e)
                 else:
                     try:
-                        import json
                         yield json.dumps(member_agent_run_response.content, indent=2)
                     except Exception as e:
                         yield str(e)
@@ -2462,7 +2412,7 @@ class Team:
         transfer_func = Function.from_callable(transfer_function, strict=True)
         return transfer_func
 
-    def _find_member_by_name(self, agent_name: str) -> Optional[Tuple[int, Union[Agent, 'Team']]]:
+    def _find_member_by_name(self, agent_name: str):
         for i, member in enumerate(self.members):
             if member.name == agent_name:
                 return (i, member)
@@ -2512,7 +2462,6 @@ class Team:
                         yield str(e)
                 else:
                     try:
-                        import json
                         yield json.dumps(member_agent_run_response.content, indent=2)
                     except Exception as e:
                         yield str(e)
@@ -2555,7 +2504,6 @@ class Team:
                         yield str(e)
                 else:
                     try:
-                        import json
                         yield json.dumps(member_agent_run_response.content, indent=2)
                     except Exception as e:
                         yield str(e)
@@ -2722,7 +2670,6 @@ class Team:
         return session_data
 
     def _get_team_session(self) -> TeamSession:
-        from time import time
         return TeamSession(session_id=self.session_id, team_id=self.team_id, user_id=self.user_id, team_session_id=self.team_session_id, memory=self.memory.to_dict() if self.memory is not None else None, team_data=self._get_team_data(), session_data=self._get_session_data(), extra_data=self.extra_data, created_at=int(time()))
 
     def _log_team_run(self) -> None:
@@ -2766,7 +2713,6 @@ class Team:
         return team_copy
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
-        from copy import copy, deepcopy
         if field_name == 'members':
             if field_value is not None:
                 return [member.deep_copy() for member in field_value]
@@ -2802,7 +2748,6 @@ class Team:
                     print(f'Failed to copy field: {field_name} - {e}')
                     return field_value
         try:
-            from copy import copy
             return copy(field_value)
         except Exception:
             return field_value

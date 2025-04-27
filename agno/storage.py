@@ -1,5 +1,6 @@
 import time
 import json
+from copy import deepcopy
 from pathlib import Path
 from sqlalchemy.dialects import sqlite, mysql
 from sqlalchemy.types import String
@@ -413,7 +414,6 @@ class SingleStoreStorage(Storage):
             self.table.drop(self.db_engine)
 
     def __deepcopy__(self, memo):
-        from copy import deepcopy
         cls = self.__class__
         copied_obj = cls.__new__(cls)
         memo[id(self)] = copied_obj
@@ -663,7 +663,6 @@ class SqliteStorage(Storage):
             self.table = self.get_table()
 
     def __deepcopy__(self, memo):
-        from copy import deepcopy
         cls = self.__class__
         copied_obj = cls.__new__(cls)
         memo[id(self)] = copied_obj

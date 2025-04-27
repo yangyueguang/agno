@@ -3,9 +3,14 @@ import time
 import csv
 import io
 import os
+import re
+import json
 import httpx
 import aiofiles
 import asyncio
+import rapidocr_onnxruntime as rapidocr
+from io import BytesIO
+from agno.ollama import Ollama
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup, Tag
@@ -18,6 +23,7 @@ from abc import ABC, abstractmethod
 from chonkie import SemanticChunker
 from typing import Any, Dict, List, Optional, Tuple, IO, Union, Set
 from agno.models import Model, Message
+from ollama import Client as OllamaClient
 
 
 @dataclass
@@ -31,20 +37,6 @@ class Embedder:
         raise NotImplementedError
 
 
-try:
-    import importlib.metadata as metadata
-    from ollama import Client as OllamaClient
-    from packaging import version
-
-    ollama_version = metadata.version('ollama')
-    parsed_version = version.parse(ollama_version)
-except ImportError as e:
-    if 'ollama' in str(e):
-        raise ImportError('Ollama not installed. Install with `pip install ollama`') from e
-    else:
-        raise ImportError('Missing dependencies. Install with `pip install packaging importlib-metadata`') from e
-except Exception as e:
-    print(f'An unexpected error occurred: {e}')
 
 
 @dataclass
@@ -128,7 +120,6 @@ class Document:
 
     @classmethod
     def from_json(cls, document: str) -> 'Document':
-        import json
         return cls(**json.loads(document))
 
 
@@ -138,7 +129,6 @@ class ChunkingStrategy(ABC):
         raise NotImplementedError
 
     def clean_text(self, text: str) -> str:
-        import re
         cleaned_text = re.sub(r'\n+', '\n', text)
         cleaned_text = re.sub(r'\s+', ' ', cleaned_text)
         cleaned_text = re.sub(r'\t+', '\t', cleaned_text)
@@ -151,10 +141,6 @@ class ChunkingStrategy(ABC):
 class AgenticChunking(ChunkingStrategy):
     def __init__(self, model: Optional[Model] = None, max_chunk_size: int = 5000):
         if model is None:
-            try:
-                from agno.ollama import Ollama
-            except Exception:
-                raise ValueError('`openai` is not installed. Please install it with `pip install openai`')
             model = Ollama()
         self.max_chunk_size = max_chunk_size
         self.model = model
@@ -506,10 +492,6 @@ class DocxReader(Reader):
 
 
 def process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
-    try:
-        import rapidocr_onnxruntime as rapidocr
-    except ImportError:
-        raise ImportError('`rapidocr_onnxruntime` not installed. Please install it via `pip install rapidocr_onnxruntime`.')
     ocr = rapidocr.RapidOCR()
     page_text = page.extract_text() or ''
     images_text_list = []
@@ -524,10 +506,6 @@ def process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
 
 
 async def async_process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
-    try:
-        import rapidocr_onnxruntime as rapidocr
-    except ImportError:
-        raise ImportError('`rapidocr_onnxruntime` not installed. Please install it via `pip install rapidocr_onnxruntime`.')
     ocr = rapidocr.RapidOCR()
     page_text = page.extract_text() or ''
     images_text_list: List = []
@@ -602,8 +580,6 @@ class PDFUrlReader(BasePDFReader):
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError('No url provided')
-        from io import BytesIO
-        import httpx
         print(f'Reading: {url}')
         for attempt in range(3):
             try:
@@ -633,11 +609,6 @@ class PDFUrlReader(BasePDFReader):
     async def async_read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError('No url provided')
-        from io import BytesIO
-        try:
-            import httpx
-        except ImportError:
-            raise ImportError('`httpx` not installed. Please install it via `pip install httpx`.')
         print(f'Reading: {url}')
         async with httpx.AsyncClient() as client:
             for attempt in range(3):
@@ -714,8 +685,6 @@ class PDFUrlImageReader(BasePDFReader):
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError('No url provided')
-        from io import BytesIO
-        import httpx
         print(f'Reading: {url}')
         response = httpx.get(url)
         doc_name = url.split('/')[-1].split('.')[0].replace(' ', '_')
@@ -730,8 +699,6 @@ class PDFUrlImageReader(BasePDFReader):
     async def async_read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError('No url provided')
-        from io import BytesIO
-        import httpx
         print(f'Reading: {url}')
         async with httpx.AsyncClient() as client:
             response = await client.get(url)
@@ -781,13 +748,8 @@ class TextReader(Reader):
                     raise FileNotFoundError(f'Could not find file: {file}')
                 print(f'Reading asynchronously: {file}')
                 file_name = file.stem
-                try:
-                    import aiofiles
-                    async with aiofiles.open(file, 'r', encoding='utf-8') as f:
-                        file_contents = await f.read()
-                except ImportError:
-                    print('aiofiles not installed, using synchronous file I/O')
-                    file_contents = file.read_text('utf-8')
+                async with aiofiles.open(file, 'r', encoding='utf-8') as f:
+                    file_contents = await f.read()
             else:
                 print(f'Reading uploaded file asynchronously: {file.name}')
                 file_name = file.name.split('.')[0]
@@ -817,10 +779,6 @@ class URLReader(Reader):
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError('No url provided')
-        try:
-            import httpx
-        except ImportError:
-            raise ImportError('`httpx` not installed. Please install it via `pip install httpx`.')
         print(f'Reading: {url}')
         for attempt in range(3):
             try:

@@ -1,14 +1,30 @@
-from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Set, Type, Union, cast, overload
 import re
 import os
 import json
+import time
+import yaml
 import string
-import warnings
+from rich.box import HEAVY
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.console import Group
+from rich.json import JSON
+from rich.live import Live
+from rich.markdown import Markdown
+from rich.status import Status
+from rich.text import Text
+from pathlib import Path
+from copy import copy, deepcopy
+from datetime import datetime
+from time import time
+from inspect import signature
+from agno.ollama import Ollama
 from uuid import uuid4
 from textwrap import dedent
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields, replace
 from collections import ChainMap, defaultdict, deque
 from pydantic import BaseModel, ValidationError
+from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Set, Type, Union, cast, overload
 from agno.knowledge import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.models import Model, Citations, Message, MessageReferences, MessageMetrics, ModelResponse, ModelResponseEvent, Timer
@@ -16,7 +32,39 @@ from agno.storage import Storage, AgentSession
 from agno.memory import Memory, SessionSummary, AgentMemory, AgentRun
 from agno.reader import Document
 from agno.tools import Function, Toolkit
-from agno.run import RunEvent, RunResponse, RunResponseExtraData, TeamRunResponse, RunMessages, NextAction, ReasoningStep, ReasoningSteps, get_deepseek_reasoning, get_openai_reasoning, aget_deepseek_reasoning, get_deepseek_reasoning_agent, get_default_reasoning_agent, get_next_action, update_messages_with_reasoning, aget_openai_reasoning, get_openai_reasoning_agent
+from agno.run import RunEvent, RunResponse, RunResponseExtraData, TeamRunResponse, RunMessages, NextAction, ReasoningStep, ReasoningSteps, get_deepseek_reasoning, get_openai_reasoning, aget_deepseek_reasoning, get_next_action, update_messages_with_reasoning, aget_openai_reasoning
+
+
+def get_deepseek_reasoning_agent(reasoning_model: Model, monitoring: bool = False) -> 'Agent':
+    return Agent(model=reasoning_model, monitoring=monitoring)
+
+
+def get_openai_reasoning_agent(reasoning_model: Model, **kwargs) -> 'Agent':
+    return Agent(model=reasoning_model, **kwargs)
+
+
+def get_default_reasoning_agent(reasoning_model: Model, min_steps: int, max_steps: int, tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None, use_json_mode: bool = False, monitoring: bool = False, telemetry: bool = True, debug_mode: bool = False) -> Optional['Agent']:
+    agent = Agent(model=reasoning_model, description='You are a meticulous, thoughtful, and logical Reasoning Agent who solves complex problems through clear, structured, step-by-step analysis.', instructions=dedent(f'''
+步骤1-问题分析：\n-用你自己的话清楚地重述用户的任务，以确保完全理解。\n-明确指出需要哪些信息以及可能需要哪些工具或资源。
+第2步-分解和制定战略：\n-将问题分解为明确定义的子任务。\n-制定至少两种不同的策略或方法来解决问题，以确保彻底性。
+第3步-意图澄清和规划：\n-清楚地表达用户请求背后的意图。\n-从步骤2中选择最合适的策略，根据与用户意图和任务约束的一致性清楚地证明你的选择。\n-制定详细的分步行动计划，概述解决问题所需的行动顺序。
+步骤4-执行行动计划：
+对于每个计划步骤，记录：\n1.**标题**：概括步骤的简明标题。\n2.**行动**：以第一人称明确说明你的下一个行动（“我会……”）。\n3.**结果**：使用必要的工具执行行动，并提供结果的简明摘要。\n4.**推理**：清楚地解释你的理由，包括：
+-必要性：为什么需要采取这一行动。\n-注意事项：强调关键考虑因素、潜在挑战和缓解策略。\n-进展：这一步如何从逻辑上遵循或建立在之前的行动之上。\n-假设：明确说明所做的任何假设，并证明其有效性。
+5.**下一步行动**：从以下选项中明确选择下一步：
+-**继续**：如果需要进一步的步骤。\n-**验证**：当你得到一个潜在的答案时，表明它已经准备好进行验证。\n-**最终答案**：只有当您自信地验证了解决方案时。\n-**重置**：如果发现严重错误或不正确的结果，请立即重新开始分析。
+6.**置信度分数**：提供一个数字置信度分数（0.0-1.0），表明您对步骤的正确性及其结果的确定性。
+步骤5-验证（在最终确定答案之前必须进行）：
+-通过以下方式明确验证您的解决方案：\n-与替代方法进行交叉验证（在步骤2中开发）。\n-使用其他可用工具或方法独立确认准确性。\n-清楚地记录验证结果和所选验证方法背后的推理。\n-如果验证失败或出现差异，明确指出错误，重置分析，并相应地修改计划。
+第6步-提供最终答案：
+-一旦经过彻底验证并充满信心，就可以清晰简洁地交付您的解决方案。\n-简要重述你的答案如何满足用户的初衷并解决所述任务。
+一般操作指南：
+-确保您的分析保持不变：
+-**完成**：解决任务的所有要素。\n-**全面**：探索不同的观点并预测潜在的结果。\n-**逻辑**：保持所有步骤之间的连贯性。\n-**可操作**：提出明确可执行的步骤和行动。\n-**富有洞察力**：在适用的情况下提供创新和独特的视角。
+-始终通过立即重置或修改步骤来明确处理错误和失误。\n-严格遵守最小{min_steps}和最大{max_steps}步数，以确保有效的任务解决。
+-主动毫不犹豫地执行必要的工具，清楚地记录工具的使用情况。'''), tools=tools, show_tool_calls=False, response_model=ReasoningSteps, use_json_mode=use_json_mode, monitoring=monitoring, telemetry=telemetry, debug_mode=debug_mode)
+    agent.model.show_tool_calls = False
+    return agent
 
 
 @dataclass
@@ -542,7 +590,6 @@ class Agent:
                         delay = 2**attempt * self.delay_between_retries
                     else:
                         delay = self.delay_between_retries
-                    import time
                     time.sleep(delay)
             except KeyboardInterrupt:
                 cancelled_response = RunResponse(run_id=self.run_id or str(uuid4()), session_id=self.session_id, agent_id=self.agent_id, content='Operation cancelled by user', event=RunEvent.run_cancelled)
@@ -801,7 +848,6 @@ class Agent:
                         delay = 2**attempt * self.delay_between_retries
                     else:
                         delay = self.delay_between_retries
-                    import time
                     time.sleep(delay)
             except KeyboardInterrupt:
                 return RunResponse(run_id=self.run_id or str(uuid4()), session_id=self.session_id, agent_id=self.agent_id, content='Operation cancelled by user', event=RunEvent.run_cancelled)
@@ -897,12 +943,6 @@ class Agent:
 
     def update_model(self, async_mode: bool = False) -> None:
         if self.model is None:
-            try:
-                from agno.ollama import Ollama
-            except ModuleNotFoundError as e:
-                print(e)
-                print('Agno代理使用“openai”作为默认模型提供程序。')
-                exit(1)
             self.model = Ollama()
         if self.response_model is None:
             self.model.response_format = None
@@ -937,7 +977,6 @@ class Agent:
             self.model.tool_call_limit = self.tool_call_limit
 
     def resolve_run_context(self) -> None:
-        from inspect import signature
         print('Resolving context')
         if self.context is not None:
             if isinstance(self.context, dict):
@@ -998,7 +1037,6 @@ class Agent:
         return session_data
 
     def get_agent_session(self) -> AgentSession:
-        from time import time
         self.memory = cast(AgentMemory, self.memory)
         self.session_id = cast(str, self.session_id)
         self.team_session_id = cast(str, self.team_session_id)
@@ -1132,7 +1170,6 @@ class Agent:
         self.load_session(force=True)
 
     def get_json_output_prompt(self) -> str:
-        import json
         json_output_prompt = '以包含以下字段的JSON格式提供输出:'
         if self.response_model is not None:
             if isinstance(self.response_model, str):
@@ -1236,7 +1273,6 @@ class Agent:
         if self.markdown and self.response_model is None:
             additional_information.append('Use markdown to format your answers.')
         if self.add_datetime_to_instructions:
-            from datetime import datetime
             additional_information.append(f'The current time is {datetime.now()}')
         if self.name is not None and self.add_name_to_instructions:
             additional_information.append(f'Your name is: {self.name}.')
@@ -1404,7 +1440,6 @@ class Agent:
                     else:
                         self.run_response.extra_data.add_messages.extend(messages_to_add_to_run_response)
         if self.add_history_to_messages:
-            from copy import deepcopy
             history: List[Message] = self.memory.get_messages_from_last_n_runs(last_n=self.num_history_runs, skip_role=self.system_message_role)
             if len(history) > 0:
                 history_copy = [deepcopy(msg) for msg in history]
@@ -1443,7 +1478,6 @@ class Agent:
         return run_messages
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> 'Agent':
-        from dataclasses import fields
         excluded_fields = ['agent_session', 'session_name']
         fields_for_new_agent: Dict[str, Any] = {}
         for f in fields(self):
@@ -1459,7 +1493,6 @@ class Agent:
         return new_agent
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
-        from copy import copy, deepcopy
         if field_name in ('memory', 'reasoning_agent'):
             return field_value.deep_copy()
         elif field_name in ('storage', 'model', 'reasoning_model'):
@@ -1490,7 +1523,6 @@ class Agent:
                     print(f'Failed to copy field: {field_name} - {e}')
                     return field_value
         try:
-            from copy import copy
             return copy(field_value)
         except Exception:
             return field_value
@@ -1535,7 +1567,6 @@ class Agent:
                         yield str(e)
                 else:
                     try:
-                        import json
                         yield json.dumps(member_agent_run_response.content, indent=2)
                     except Exception as e:
                         yield str(e)
@@ -1585,7 +1616,6 @@ class Agent:
 
     def get_relevant_docs_from_knowledge(self, query: str, num_documents: Optional[int] = None, **kwargs) -> Optional[List[Dict[str, Any]]]:
         if self.retriever is not None and callable(self.retriever):
-            from inspect import signature
             try:
                 sig = signature(self.retriever)
                 retriever_kwargs: Dict[str, Any] = {}
@@ -1605,7 +1635,6 @@ class Agent:
     
     async def aget_relevant_docs_from_knowledge(self, query: str, num_documents: Optional[int] = None, **kwargs) -> Optional[List[Dict[str, Any]]]:
         if self.retriever is not None and callable(self.retriever):
-            from inspect import signature
             try:
                 sig = signature(self.retriever)
                 retriever_kwargs: Dict[str, Any] = {}
@@ -1627,15 +1656,12 @@ class Agent:
         if docs is None or len(docs) == 0:
             return ''
         if self.references_format == 'yaml':
-            import yaml
             return yaml.dump(docs)
-        import json
         return json.dumps(docs, indent=2)
 
     def convert_context_to_string(self, context: Dict[str, Any]) -> str:
         if context is None:
             return ''
-        import json
         try:
             return json.dumps(context, indent=2, default=str)
         except (TypeError, ValueError, OverflowError) as e:
@@ -1662,7 +1688,6 @@ class Agent:
                 else:
                     print('输出文件名中未使用消息：消息不是字符串')
             try:
-                from pathlib import Path
                 fn = self.save_response_to_file.format(name=self.name, session_id=self.session_id, user_id=self.user_id, message=message_str, run_id=self.run_id)
                 fn_path = Path(fn)
                 if not fn_path.parent.exists():
@@ -1670,7 +1695,6 @@ class Agent:
                 if isinstance(self.run_response.content, str):
                     fn_path.write_text(self.run_response.content)
                 else:
-                    import json
                     fn_path.write_text(json.dumps(self.run_response.content, indent=2))
             except Exception as e:
                 print(f'未能将输出保存到文件: {e}')
@@ -1978,7 +2002,6 @@ class Agent:
                 yield self.create_run_response(content=ReasoningSteps(reasoning_steps=all_reasoning_steps), content_type=ReasoningSteps.__class__.__name__, event=RunEvent.reasoning_completed)
 
     def get_chat_history(self, num_chats: Optional[int] = None) -> str:
-        import json
         history: List[Dict[str, Any]] = []
         self.memory = cast(AgentMemory, self.memory)
         all_chats = self.memory.get_message_pairs()
@@ -1994,7 +2017,6 @@ class Agent:
         return json.dumps(history)
 
     def get_tool_call_history(self, num_calls: int = 3) -> str:
-        import json
         self.memory = cast(AgentMemory, self.memory)
         tool_calls = self.memory.get_tool_calls(num_calls)
         if len(tool_calls) == 0:
@@ -2039,7 +2061,6 @@ class Agent:
         return self.convert_documents_to_string(docs_from_knowledge)
 
     def add_to_knowledge(self, query: str, result: str) -> str:
-        import json
         if self.knowledge is None:
             return 'Knowledge base not available'
         document_name = self.name
@@ -2101,13 +2122,6 @@ class Agent:
             print(f'Could not create agent event: {e}')
 
     def print_response(self, message: Optional[Union[List, Dict, str, Message]] = None, *, messages: Optional[List[Union[Dict, Message]]] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, stream: bool = False, markdown: bool = False, show_message: bool = True, show_reasoning: bool = True, show_full_reasoning: bool = False, console: Optional[Any] = None, tags_to_include_in_markdown: Set[str] = {'think', 'thinking'}, **kwargs: Any) -> None:
-        import json
-        from rich.console import Group
-        from rich.json import JSON
-        from rich.live import Live
-        from rich.markdown import Markdown
-        from rich.status import Status
-        from rich.text import Text
         if markdown:
             self.markdown = True
         if self.response_model is not None:
@@ -2278,13 +2292,6 @@ class Agent:
                 live_log.update(Group(*panels))
 
     async def aprint_response(self, message: Optional[Union[List, Dict, str, Message]] = None, *, messages: Optional[List[Union[Dict, Message]]] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, stream: bool = False, markdown: bool = False, show_message: bool = True, show_reasoning: bool = True, show_full_reasoning: bool = False, console: Optional[Any] = None, tags_to_include_in_markdown: Set[str] = {'think', 'thinking'}, **kwargs: Any) -> None:
-        import json
-        from rich.console import Group
-        from rich.json import JSON
-        from rich.live import Live
-        from rich.markdown import Markdown
-        from rich.status import Status
-        from rich.text import Text
         if markdown:
             self.markdown = True
         if self.response_model is not None:
@@ -2455,7 +2462,6 @@ class Agent:
                 live_log.update(Group(*panels))
 
     def cli_app(self, message: Optional[str] = None, user: str = 'User', emoji: str = ':sunglasses:', stream: bool = False, markdown: bool = False, exit_on: Optional[List[str]] = None, **kwargs: Any) -> None:
-        from rich.prompt import Prompt
         if message:
             self.print_response(message=message, stream=stream, markdown=markdown, **kwargs)
         _exit_on = exit_on or ['exit', 'quit', 'bye']
@@ -2491,8 +2497,6 @@ def merge_dictionaries(a: Dict[str, Any], b: Dict[str, Any]) -> None:
 
 
 def create_panel(content, title, border_style='blue'):
-    from rich.box import HEAVY
-    from rich.panel import Panel
     return Panel(content, title=title, title_align='left', border_style=border_style, box=HEAVY, expand=True, padding=(1, 1))
 
 

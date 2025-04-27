@@ -1,3 +1,6 @@
+import base64
+import zlib
+import httpx
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic import BaseModel, field_validator, model_validator
@@ -47,9 +50,7 @@ class Video(BaseModel):
         filepath = data.get('filepath')
         content = data.get('content')
         if content and isinstance(content, str):
-            import base64
             try:
-                import zlib
                 decoded_content = base64.b64decode(content)
                 content = zlib.decompress(decoded_content)
             except Exception:
@@ -63,8 +64,6 @@ class Video(BaseModel):
         return data
 
     def to_dict(self) -> Dict[str, Any]:
-        import base64
-        import zlib
         response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8') if self.content else None, 'filepath': self.filepath, 'format': self.format}
         return {k: v for k, v in response_dict.items() if v is not None}
 
@@ -85,9 +84,7 @@ class Audio(BaseModel):
         content = data.get('content')
         url = data.get('url')
         if content and isinstance(content, str):
-            import base64
             try:
-                import zlib
                 decoded_content = base64.b64decode(content)
                 content = zlib.decompress(decoded_content)
             except Exception:
@@ -102,15 +99,12 @@ class Audio(BaseModel):
 
     @property
     def audio_url_content(self) -> Optional[bytes]:
-        import httpx
         if self.url:
             return httpx.get(self.url).content
         else:
             return None
 
     def to_dict(self) -> Dict[str, Any]:
-        import base64
-        import zlib
         response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8')
             if self.content
             else None, 'filepath': self.filepath, 'format': self.format}
@@ -131,7 +125,6 @@ class AudioResponse(BaseModel):
     channels: Optional[int] = 1
 
     def to_dict(self) -> Dict[str, Any]:
-        import base64
         response_dict = {'id': self.id, 'content': base64.b64encode(self.content).decode('utf-8')
             if isinstance(self.content, bytes)
             else self.content, 'expires_at': self.expires_at, 'transcript': self.transcript, 'mime_type': self.mime_type, 'sample_rate': self.sample_rate, 'channels': self.channels}
@@ -148,7 +141,6 @@ class Image(BaseModel):
 
     @property
     def image_url_content(self) -> Optional[bytes]:
-        import httpx
         if self.url:
             return httpx.get(self.url).content
         else:
@@ -160,9 +152,7 @@ class Image(BaseModel):
         filepath = data.get('filepath')
         content = data.get('content')
         if content and isinstance(content, str):
-            import base64
             try:
-                import zlib
                 decoded_content = base64.b64decode(content)
                 content = zlib.decompress(decoded_content)
             except Exception:
@@ -176,8 +166,6 @@ class Image(BaseModel):
         return data
 
     def to_dict(self) -> Dict[str, Any]:
-        import base64
-        import zlib
         response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8')
             if self.content
             else None, 'filepath': self.filepath, 'url': self.url, 'detail': self.detail}
@@ -214,7 +202,6 @@ class File(BaseModel):
 
     @property
     def file_url_content(self) -> Optional[Tuple[bytes, str]]:
-        import httpx
         if self.url:
             response = httpx.get(self.url)
             content = response.content

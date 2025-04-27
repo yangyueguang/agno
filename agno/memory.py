@@ -5,6 +5,7 @@ from datetime import datetime
 from hashlib import md5
 from pydantic import BaseModel, ConfigDict, model_validator, Field, ValidationError
 from enum import Enum
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, cast
 from pathlib import Path
 from sqlalchemy import Column, DateTime, Engine, MetaData, String, Table, create_engine, delete, inspect, select, text
@@ -15,6 +16,7 @@ from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.run import TeamRunResponse, RunResponse
 from agno.tools import Function
 from agno.models import Model, Message
+from agno.ollama import Ollama
 
 
 class AgentRun(BaseModel):
@@ -216,12 +218,6 @@ class MemoryManager(BaseModel):
 
     def update_model(self) -> None:
         if self.model is None:
-            try:
-                from agno.ollama import Ollama
-            except ModuleNotFoundError as e:
-                print(e)
-                print('Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`.')
-                exit(1)
             self.model = Ollama()
         self.add_tools_to_model(model=self.model)
 
@@ -351,12 +347,6 @@ class MemoryClassifier(BaseModel):
 
     def update_model(self) -> None:
         if self.model is None:
-            try:
-                from agno.ollama import Ollama
-            except ModuleNotFoundError as e:
-                print(e)
-                print('Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`.')
-                exit(1)
             self.model = Ollama()
 
     def get_system_message(self) -> Message:
@@ -418,12 +408,6 @@ class MemorySummarizer(BaseModel):
 
     def update_model(self) -> None:
         if self.model is None:
-            try:
-                from agno.ollama import Ollama
-            except ModuleNotFoundError as e:
-                print(e)
-                print('Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`.')
-                exit(1)
             self.model = Ollama()
         if self.use_structured_outputs:
             self.model.response_format = SessionSummary
@@ -747,7 +731,6 @@ class AgentMemory(BaseModel):
         self.memories = None
 
     def deep_copy(self) -> 'AgentMemory':
-        from copy import deepcopy
         copied_obj = self.__class__(**self.to_dict())
         for field_name, field_value in self.__dict__.items():
             if field_name not in ['db', 'classifier', 'manager', 'summarizer']:
@@ -1024,7 +1007,6 @@ class TeamMemory:
         return response
 
     def deep_copy(self) -> 'TeamMemory':
-        from copy import deepcopy
         copied_obj = self.__class__(**self.to_dict())
         for field_name, field_value in self.__dict__.items():
             if field_name not in ['db', 'classifier', 'manager']:
@@ -1054,7 +1036,7 @@ class WorkflowMemory(BaseModel):
 
     def add_run(self, workflow_run: WorkflowRun) -> None:
         self.runs.append(workflow_run)
-        print('Added WorkflowRun to WorkflowMemory')
+        print('已将WorkflowRun添加到WorkflowMemory')
 
     def clear(self) -> None:
         self.runs = []

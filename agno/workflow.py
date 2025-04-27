@@ -11,6 +11,7 @@ from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory import WorkflowMemory, WorkflowRun
 from agno.run import RunEvent, RunResponse
 from agno.storage import Storage, WorkflowSession
+from copy import copy, deepcopy
 
 
 def merge_dictionaries(a: Dict[str, Any], b: Dict[str, Any]) -> None:
@@ -22,7 +23,6 @@ def merge_dictionaries(a: Dict[str, Any], b: Dict[str, Any]) -> None:
 
 
 def nested_model_dump(value):
-    from pydantic import BaseModel
     if isinstance(value, BaseModel):
         return value.model_dump()
     elif isinstance(value, dict):
@@ -366,7 +366,6 @@ class Workflow:
         return new_workflow
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
-        from copy import copy, deepcopy
         if field_name == 'memory':
             return field_value.deep_copy()
         if isinstance(field_value, (list, dict, set, Storage)):
