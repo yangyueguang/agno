@@ -133,7 +133,6 @@ class SessionMetrics:
         return self + other
 
 
-@dataclass(init=False)
 class Agent:
     model: Optional[Model] = None
     name: Optional[str] = None
@@ -207,7 +206,26 @@ class Agent:
     monitoring: bool = False
     telemetry: bool = True
 
-    def __init__(self, *, model: Optional[Model] = None, name: Optional[str] = None, agent_id: Optional[str] = None, introduction: Optional[str] = None, user_id: Optional[str] = None, session_id: Optional[str] = None, session_name: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None, context: Optional[Dict[str, Any]] = None, add_context: bool = False, resolve_context: bool = True, memory: Optional[AgentMemory] = None, add_history_to_messages: bool = False, num_history_responses: Optional[int] = None, num_history_runs: int = 3, knowledge: Optional[AgentKnowledge] = None, add_references: bool = False, retriever: Optional[Callable[..., Optional[List[Dict]]]] = None, references_format: Literal['json', 'yaml'] = 'json', storage: Optional[Storage] = None, extra_data: Optional[Dict[str, Any]] = None, tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None, show_tool_calls: bool = True, tool_call_limit: Optional[int] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None, reasoning: bool = False, reasoning_model: Optional[Model] = None, reasoning_agent: Optional['Agent'] = None, reasoning_min_steps: int = 1, reasoning_max_steps: int = 10, read_chat_history: bool = False, search_knowledge: bool = True, update_knowledge: bool = False, read_tool_call_history: bool = False, system_message: Optional[Union[str, Callable, Message]] = None, system_message_role: str = 'system', create_default_system_message: bool = True, description: Optional[str] = None, goal: Optional[str] = None, instructions: Optional[Union[str, List[str], Callable]] = None, expected_output: Optional[str] = None, additional_context: Optional[str] = None, markdown: bool = False, add_name_to_instructions: bool = False, add_datetime_to_instructions: bool = False, add_state_in_messages: bool = False, add_messages: Optional[List[Union[Dict, Message]]] = None, user_message: Optional[Union[List, Dict, str, Callable, Message]] = None, user_message_role: str = 'user', create_default_user_message: bool = True, retries: int = 0, delay_between_retries: int = 1, exponential_backoff: bool = False, response_model: Optional[Type[BaseModel]] = None, parse_response: bool = True, structured_outputs: Optional[bool] = None, use_json_mode: bool = False, save_response_to_file: Optional[str] = None, stream: Optional[bool] = None, stream_intermediate_steps: bool = False, team: Optional[List['Agent']] = None, team_data: Optional[Dict[str, Any]] = None, role: Optional[str] = None, respond_directly: bool = False, add_transfer_instructions: bool = True, team_response_separator: str = '\n', debug_mode: bool = False, monitoring: bool = False, telemetry: bool = True):
+    def __init__(self, model: Optional[Model] = None, name: Optional[str] = None, agent_id: Optional[str] = None, introduction: Optional[str] = None,
+                 user_id: Optional[str] = None, session_id: Optional[str] = None, session_name: Optional[str] = None,
+                 session_state: Optional[Dict[str, Any]] = None, context: Optional[Dict[str, Any]] = None, add_context: bool = False,
+                 resolve_context: bool = True, memory: Optional[AgentMemory] = None, add_history_to_messages: bool = False,
+                 num_history_responses: Optional[int] = None, num_history_runs: int = 3, knowledge: Optional[AgentKnowledge] = None,
+                 add_references: bool = False, retriever: Optional[Callable[..., Optional[List[Dict]]]] = None, references_format: Literal['json', 'yaml'] = 'json',
+                 storage: Optional[Storage] = None, extra_data: Optional[Dict[str, Any]] = None, tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
+                 show_tool_calls: bool = True, tool_call_limit: Optional[int] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None, reasoning: bool = False,
+                 reasoning_model: Optional[Model] = None, reasoning_agent: Optional['Agent'] = None, reasoning_min_steps: int = 1,
+                 reasoning_max_steps: int = 10, read_chat_history: bool = False, search_knowledge: bool = True, update_knowledge: bool = False,
+                 read_tool_call_history: bool = False, system_message: Optional[Union[str, Callable, Message]] = None, system_message_role: str = 'system',
+                 create_default_system_message: bool = True, description: Optional[str] = None, goal: Optional[str] = None, instructions: Optional[Union[str, List[str], Callable]] = None,
+                 expected_output: Optional[str] = None, additional_context: Optional[str] = None, markdown: bool = False, add_name_to_instructions: bool = False,
+                 add_datetime_to_instructions: bool = False, add_state_in_messages: bool = False, add_messages: Optional[List[Union[Dict, Message]]] = None,
+                 user_message: Optional[Union[List, Dict, str, Callable, Message]] = None, user_message_role: str = 'user', create_default_user_message: bool = True,
+                 retries: int = 0, delay_between_retries: int = 1, exponential_backoff: bool = False, response_model: Optional[Type[BaseModel]] = None,
+                 parse_response: bool = True, structured_outputs: Optional[bool] = None, use_json_mode: bool = False, save_response_to_file: Optional[str] = None,
+                 stream: Optional[bool] = None, stream_intermediate_steps: bool = False, team: Optional[List['Agent']] = None, team_data: Optional[Dict[str, Any]] = None,
+                 role: Optional[str] = None, respond_directly: bool = False, add_transfer_instructions: bool = True, team_response_separator: str = '\n', debug_mode: bool = False,
+                 monitoring: bool = False, telemetry: bool = True):
         self.model = model
         self.name = name
         self.agent_id = agent_id
@@ -538,12 +556,6 @@ class Agent:
         if not self.stream:
             yield self.run_response
 
-    @overload
-    def run(self, message: Optional[Union[str, List, Dict, Message]] = None, *, stream: Literal[False] = False, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, messages: Optional[Sequence[Union[Dict, Message]]] = None, stream_intermediate_steps: bool = False, retries: Optional[int] = None, **kwargs: Any) -> RunResponse: ...
-
-    @overload
-    def run(self, message: Optional[Union[str, List, Dict, Message]] = None, *, stream: Literal[True] = True, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, messages: Optional[Sequence[Union[Dict, Message]]] = None, stream_intermediate_steps: bool = False, retries: Optional[int] = None, **kwargs: Any) -> Iterator[RunResponse]: ...
-
     def run(self, message: Optional[Union[str, List, Dict, Message]] = None, *, stream: Optional[bool] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, messages: Optional[Sequence[Union[Dict, Message]]] = None, stream_intermediate_steps: bool = False, retries: Optional[int] = None, **kwargs: Any) -> Union[RunResponse, Iterator[RunResponse]]:
         if retries is None:
             retries = self.retries
@@ -855,7 +867,7 @@ class Agent:
             print(f'Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})')
             raise last_exception
         else:
-            raise Exception(f'Failed after {num_attempts} attempts.')
+            raise Exception(f'{num_attempts}次后失败')
 
     def create_run_response(self, content: Optional[Any] = None, *, thinking: Optional[str] = None, redacted_thinking: Optional[str] = None, event: RunEvent = RunEvent.run_response, content_type: Optional[str] = None, created_at: Optional[int] = None, citations: Optional[Citations] = None) -> RunResponse:
         self.run_response = cast(RunResponse, self.run_response)

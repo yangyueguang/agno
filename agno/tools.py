@@ -469,20 +469,9 @@ class FunctionCall(BaseModel):
         return function_call_success
 
 
-@overload
-def tool() -> Callable[[F], Function]: ...
-
-
-@overload
-def tool(*, name: Optional[str] = None, 
-    description: Optional[str] = None, strict: Optional[bool] = None, sanitize_arguments: Optional[bool] = None, show_result: Optional[bool] = None, stop_after_tool_call: Optional[bool] = None, pre_hook: Optional[Callable] = None, post_hook: Optional[Callable] = None, cache_results: bool = False, cache_dir: Optional[str] = None, cache_ttl: int = 3600) -> Callable[[F], Function]: ...
-
-
-@overload
-def tool(func: F) -> Function: ...
-
-
-def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
+def tool(name: Optional[str] = None, description: Optional[str] = None, strict: Optional[bool] = None, sanitize_arguments: Optional[bool] = None,
+         show_result: Optional[bool] = None, stop_after_tool_call: Optional[bool] = None, pre_hook: Optional[Callable] = None, post_hook: Optional[Callable] = None,
+         cache_results: bool = False, cache_dir: Optional[str] = None, cache_ttl: int = 3600) -> Callable[[F], Function]:
     """Decorator将函数转换为代理可以使用的函数。
     Args：
     name:可选[str]-覆盖函数名
@@ -498,11 +487,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
     cache_ttl:int-缓存结果的生存时间（秒）
     return:
     Union[函数，可调用[[F]，函数]]：装饰函数或装饰器"""
-    VALID_KWARGS = frozenset({'name', 'description', 'strict', 'sanitize_arguments', 'show_result', 'stop_after_tool_call', 'pre_hook', 'post_hook', 'cache_results', 'cache_dir', 'cache_ttl'})
-    invalid_kwargs = set(kwargs.keys()) - VALID_KWARGS
-    if invalid_kwargs:
-        raise ValueError(f'Invalid tool configuration arguments: {invalid_kwargs}. Valid arguments are: {sorted(VALID_KWARGS)}')
-
     def decorator(func: F) -> Function:
         @wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -532,12 +516,9 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         else:
             wrapper = sync_wrapper
         update_wrapper(wrapper, func)
-        tool_config = {'name': kwargs.get('name', func.__name__), 'description': kwargs.get('description', getdoc(func)), 'entrypoint': wrapper, 'cache_results': kwargs.get('cache_results', False), 'cache_dir': kwargs.get('cache_dir'), 'cache_ttl': kwargs.get('cache_ttl', 3600), **{k: v
-                for k, v in kwargs.items()
-                if k not in ['name', 'description', 'cache_results', 'cache_dir', 'cache_ttl'] and v is not None}}
-        return Function(**tool_config)
-    if len(args) == 1 and callable(args[0]) and not kwargs:
-        return decorator(args[0])
+        return Function(**{'name': name or func.__name__, 'description': description or getdoc(func), 'entrypoint': wrapper, 'cache_results': cache_results, 'cache_dir': cache_dir, 'cache_ttl': cache_ttl})
+    if callable(name):
+        return decorator(name)
     return decorator
 
 

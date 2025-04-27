@@ -76,7 +76,6 @@ def format_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[str]:
     return formatted_tool_calls
 
 
-@dataclass(init=False)
 class Team:
     members: List[Union[Agent, 'Team']]
     mode: Literal['route', 'coordinate', 'collaborate'] = 'coordinate'
@@ -122,7 +121,18 @@ class Team:
     monitoring: bool = False
     telemetry: bool = True
 
-    def __init__(self, members: List[Union[Agent, 'Team']], mode: Literal['route', 'coordinate', 'collaborate'] = 'coordinate', model: Optional[Model] = None, name: Optional[str] = None, team_id: Optional[str] = None, user_id: Optional[str] = None, session_id: Optional[str] = None, session_name: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None, add_state_in_messages: bool = False, description: Optional[str] = None, instructions: Optional[Union[str, List[str], Callable]] = None, expected_output: Optional[str] = None, success_criteria: Optional[str] = None, markdown: bool = False, add_datetime_to_instructions: bool = False, context: Optional[Dict[str, Any]] = None, add_context: bool = False, enable_agentic_context: bool = False, share_member_interactions: bool = False, read_team_history: bool = False, tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None, show_tool_calls: bool = True, tool_call_limit: Optional[int] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None, response_model: Optional[Type[BaseModel]] = None, use_json_mode: bool = False, parse_response: bool = True, memory: Optional[TeamMemory] = None, enable_team_history: bool = False, num_of_interactions_from_history: int = 3, storage: Optional[Storage] = None, extra_data: Optional[Dict[str, Any]] = None, reasoning: bool = False, reasoning_model: Optional[Model] = None, reasoning_min_steps: int = 1, reasoning_max_steps: int = 10, debug_mode: bool = False, show_members_responses: bool = False, monitoring: bool = False, telemetry: bool = True):
+    def __init__(self, members: List[Union[Agent, 'Team']], mode: Literal['route', 'coordinate', 'collaborate'] = 'coordinate',
+                 model: Optional[Model] = None, name: Optional[str] = None, team_id: Optional[str] = None, user_id: Optional[str] = None,
+                 session_id: Optional[str] = None, session_name: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None,
+                 add_state_in_messages: bool = False, description: Optional[str] = None, instructions: Optional[Union[str, List[str], Callable]] = None,
+                 expected_output: Optional[str] = None, success_criteria: Optional[str] = None, markdown: bool = False, add_datetime_to_instructions: bool = False,
+                 context: Optional[Dict[str, Any]] = None, add_context: bool = False, enable_agentic_context: bool = False, share_member_interactions: bool = False,
+                 read_team_history: bool = False, tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None, show_tool_calls: bool = True,
+                 tool_call_limit: Optional[int] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None, response_model: Optional[Type[BaseModel]] = None,
+                 use_json_mode: bool = False, parse_response: bool = True, memory: Optional[TeamMemory] = None, enable_team_history: bool = False,
+                 num_of_interactions_from_history: int = 3, storage: Optional[Storage] = None, extra_data: Optional[Dict[str, Any]] = None, reasoning: bool = False,
+                 reasoning_model: Optional[Model] = None, reasoning_min_steps: int = 1, reasoning_max_steps: int = 10, debug_mode: bool = False,
+                 show_members_responses: bool = False, monitoring: bool = False, telemetry: bool = True):
         self.members = members
         self.mode = mode
         self.model = model
@@ -229,13 +239,7 @@ class Team:
         for member in self.members:
             self._initialize_member(member)
 
-    @overload
-    def run(self, message: Union[str, List, Dict, Message], *, stream: Literal[False] = False, stream_intermediate_steps: bool = False, retries: Optional[int] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, **kwargs: Any) -> TeamRunResponse: ...
-
-    @overload
-    def run(self, message: Union[str, List, Dict, Message], *, stream: Literal[True] = True, stream_intermediate_steps: bool = False, retries: Optional[int] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, **kwargs: Any) -> Iterator[TeamRunResponse]: ...
-
-    def run(self, message: Union[str, List, Dict, Message], *, stream: bool = False, stream_intermediate_steps: bool = False, retries: Optional[int] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, **kwargs: Any) -> Union[TeamRunResponse, Iterator[TeamRunResponse]]:
+    def run(self, message: Union[str, List, Dict, Message], *, stream: bool = False,          stream_intermediate_steps: bool = False, retries: Optional[int] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, **kwargs: Any) -> Union[TeamRunResponse, Iterator[TeamRunResponse]]:
         self._initialize_team()
         retries = retries or 3
         if retries < 1:
@@ -519,12 +523,6 @@ class Team:
         if stream_intermediate_steps:
             yield self._create_run_response(from_run_response=run_response, event=RunEvent.run_completed)
         print(f'Team Run End: {self.run_id}')
-
-    @overload
-    async def arun(self, message: Union[str, List, Dict, Message], *, stream: Literal[False] = False, stream_intermediate_steps: bool = False, retries: Optional[int] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, **kwargs: Any) -> TeamRunResponse: ...
-
-    @overload
-    async def arun(self, message: Union[str, List, Dict, Message], *, stream: Literal[True] = True, stream_intermediate_steps: bool = False, retries: Optional[int] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, **kwargs: Any) -> AsyncIterator[TeamRunResponse]: ...
 
     async def arun(self, message: Union[str, List, Dict, Message], *, stream: bool = False, stream_intermediate_steps: bool = False, retries: Optional[int] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, **kwargs: Any) -> Union[TeamRunResponse, AsyncIterator[TeamRunResponse]]:
         self._initialize_team()
