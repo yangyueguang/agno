@@ -5,15 +5,47 @@ import collections.abc
 from uuid import uuid4
 from enum import Enum
 from copy import deepcopy
-from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction
 from time import time, perf_counter
 from abc import ABC, abstractmethod
 from types import AsyncGeneratorType, GeneratorType
-from agno.tools import AgentRunException, Function, FunctionCall
 from dataclasses import dataclass, field
-from pydantic import BaseModel, ConfigDict, Field
-from agno.media import Audio, AudioResponse, File, Image, ImageArtifact, Video
-from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union, Sequence
+from pydantic import BaseModel, ConfigDict, Field, validate_call
+from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Tuple, Sequence, Mapping, Optional, Union, Callable, get_type_hints, get_args, get_origin
+import base64
+import zlib
+import requests
+from pathlib import Path
+from textwrap import dedent
+from ollama import AsyncClient as AsyncOllamaClient, Client as OllamaClient
+from ollama._types import ChatResponse, Message as OllamaMessage
+from functools import update_wrapper, wraps, partial
+from docstring_parser import parse
+from collections import OrderedDict
+from tempfile import gettempdir
+from hashlib import md5
+from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator, iscoroutine, getdoc, signature
+from types import UnionType
+
+
+class Dot(dict):
+    def __init__(self, seq=None, **kwargs):
+        if not isinstance(seq, dict):
+            seq = {'value': seq}
+        super(Dot, self).__init__(seq, **kwargs)
+
+    def __getattr__(self, attr):
+        res = self.get(attr)
+        if isinstance(res, dict):
+            return Dot(res)
+        return res
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+
+    def __call__(self, keypath: str, *args, **kwargs):
+        temp = self
+        for i in keypath.split('.'):
+            temp = temp[int(i) if i.isnumeric() else i]
+        return temp
 
 
 class Timer:
@@ -44,6 +76,665 @@ class Timer:
         self.end_time = perf_counter()
         if self.start_time is not None:
             self.elapsed_time = self.end_time - self.start_time
+
+
+class AgentRunException(Exception):
+    def __init__(self, exc, user_message: str = None, agent_message: str = None, messages: Optional[List[dict]] = None, stop_execution: bool = False):
+        super().__init__(exc)
+        self.user_message = user_message
+        self.agent_message = agent_message
+        self.messages = messages
+        self.stop_execution = stop_execution
+
+
+def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
+    type_args = get_args(t)
+    type_origin = get_origin(t)
+    if type_origin is not None:
+        if type_origin in (list, tuple, set, frozenset):
+            json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {'type': 'string'}
+            return {'type': 'array', 'items': json_schema_for_items}
+        elif type_origin is dict:
+            key_schema = get_json_schema_for_arg(type_args[0]) if type_args else {'type': 'string'}
+            value_schema = get_json_schema_for_arg(type_args[1]) if len(type_args) > 1 else {'type': 'string'}
+            return {'type': 'object', 'propertyNames': key_schema, 'additionalProperties': value_schema}
+        elif type_origin in [Union, UnionType]:
+            types = []
+            for arg in type_args:
+                try:
+                    schema = get_json_schema_for_arg(arg)
+                    if schema:
+                        types.append(schema)
+                except Exception:
+                    continue
+            return {'anyOf': types} if types else None
+    types = {
+        'number': ['int', 'float', 'complex', 'Decimal'],
+        'string': ['str', 'string'],
+        'boolean': ['bool', 'boolean'],
+        'null': ['NoneType', 'None'],
+        'array': ['list', 'tuple', 'set', 'frozenset'],
+        'object': ['dict', 'mapping']}
+    json_schema = {'type': object}
+    for k, v in types.items():
+        if t.__name__ in v:
+            json_schema['type'] = k
+    if json_schema['type'] == 'object':
+        json_schema['properties'] = {}
+        json_schema['additionalProperties'] = False
+    return json_schema
+
+
+def get_json_schema(type_hints: Dict[str, Any], param_descriptions: Optional[Dict[str, str]] = None, strict: bool = False) -> Dict[str, Any]:
+    json_schema: Dict[str, Any] = {'type': 'object', 'properties': {}}
+    if strict:
+        json_schema['additionalProperties'] = False
+    for k, v in type_hints.items():
+        if k == 'return':
+            continue
+        try:
+            type_origin = get_origin(v)
+            type_args = get_args(v)
+            is_optional = type_origin is Union and len(type_args) == 2 and any(arg is type(None) for arg in type_args)
+            if is_optional:
+                v = next(arg for arg in type_args if arg is not type(None))
+            if v:
+                arg_json_schema = get_json_schema_for_arg(v)
+            else:
+                arg_json_schema = {}
+            if arg_json_schema is not None:
+                if is_optional:
+                    if isinstance(arg_json_schema['type'], list):
+                        arg_json_schema['type'].append('null')
+                    else:
+                        arg_json_schema['type'] = [arg_json_schema['type'], 'null']
+                if param_descriptions and k in param_descriptions and param_descriptions[k]:
+                    arg_json_schema['description'] = param_descriptions[k]
+                json_schema['properties'][k] = arg_json_schema
+            else:
+                print(f'Could not parse argument {k} of type {v}')
+        except Exception as e:
+            print(f'Error processing argument {k}: {str(e)}')
+            continue
+    return json_schema
+
+
+class Function(BaseModel):
+    name: str
+    description: Optional[str] = None
+    parameters: Dict[str, Any] = Field(default_factory=lambda: {'type': 'object', 'properties': {}, 'required': []}, description='JSON Schema object describing function parameters')
+    strict: Optional[bool] = None
+    entrypoint: Optional[Callable] = None
+    skip_entrypoint_processing: bool = False
+    sanitize_arguments: bool = True
+    show_result: bool = False
+    stop_after_tool_call: bool = False
+    pre_hook: Optional[Callable] = None
+    post_hook: Optional[Callable] = None
+    cache_results: bool = False
+    cache_dir: Optional[str] = None
+    cache_ttl: int = 3600
+    _agent: Optional[Any] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self.model_dump(exclude_none=True, include={'name', 'description', 'parameters', 'strict'})
+
+    @classmethod
+    def get_entrypoint_docstring(cls, entrypoint: Callable) -> str:
+        if isinstance(entrypoint, partial):
+            return str(entrypoint)
+        doc = getdoc(entrypoint)
+        if not doc:
+            return ''
+        parsed = parse(doc)
+        lines = []
+        if parsed.short_description:
+            lines.append(parsed.short_description)
+        if parsed.long_description:
+            lines.extend(parsed.long_description.split('\n'))
+        return '\n'.join(lines)
+
+    @classmethod
+    def from_callable(cls, c: Callable, strict: bool = False) -> 'Function':
+        function_name = c.__name__
+        parameters = {'type': 'object', 'properties': {}, 'required': []}
+        try:
+            sig = signature(c)
+            type_hints = get_type_hints(c)
+            if 'agent' in sig.parameters:
+                del type_hints['agent']
+            param_type_hints = {name: type_hints.get(name) for name in sig.parameters if name != 'return' and name != 'agent'}
+            param_descriptions = {}
+            if docstring := getdoc(c):
+                parsed_doc = parse(docstring)
+                param_docs = parsed_doc.params
+                if param_docs is not None:
+                    for param in param_docs:
+                        param_name = param.arg_name
+                        param_type = param.type_name
+                        param_descriptions[param_name] = f'({param_type}) {param.description}'
+            parameters = get_json_schema(type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict)
+            if strict:
+                parameters['required'] = [name for name in parameters['properties'] if name != 'agent']
+            else:
+                parameters['required'] = [name for name, param in sig.parameters.items() if param.default == param.empty and name != 'self' and name != 'agent']
+        except Exception as e:
+            print(f'Could not parse args for {function_name}: {e}', exc_info=True)
+        if isasyncgenfunction(c):
+            entrypoint = c
+        else:
+            entrypoint = validate_call(c, config=dict(arbitrary_types_allowed=True))
+        return cls(name=function_name, description=cls.get_entrypoint_docstring(entrypoint=c), parameters=parameters, entrypoint=entrypoint)
+
+    def process_entrypoint(self, strict: bool = False):
+        if self.skip_entrypoint_processing:
+            return
+        if self.entrypoint is None:
+            return
+        parameters = {'type': 'object', 'properties': {}, 'required': []}
+        params_set_by_user = False
+        if self.parameters != parameters:
+            params_set_by_user = True
+        try:
+            sig = signature(self.entrypoint)
+            type_hints = get_type_hints(self.entrypoint)
+            if 'agent' in sig.parameters:
+                del type_hints['agent']
+            param_type_hints = {name: type_hints.get(name) for name in sig.parameters if name != 'return' and name != 'agent'}
+            param_descriptions = {}
+            if docstring := getdoc(self.entrypoint):
+                parsed_doc = parse(docstring)
+                param_docs = parsed_doc.params
+                if param_docs is not None:
+                    for param in param_docs:
+                        param_name = param.arg_name
+                        param_type = param.type_name
+                        param_descriptions[param_name] = f'({param_type}) {param.description}'
+            parameters = get_json_schema(type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict)
+            if strict:
+                parameters['required'] = [name for name in parameters['properties'] if name != 'agent']
+            else:
+                parameters['required'] = [
+                    name
+                    for name, param in sig.parameters.items()
+                    if param.default == param.empty and name != 'self' and name != 'agent'
+                ]
+            if params_set_by_user:
+                self.parameters['additionalProperties'] = False
+                if strict:
+                    self.parameters['required'] = [name for name in self.parameters['properties'] if name != 'agent']
+                else:
+                    self.parameters['required'] = [name for name, param in sig.parameters.items() if param.default == param.empty and name != 'self' and name != 'agent']
+        except Exception as e:
+            print(f'Could not parse args for {self.name}: {e}', exc_info=True)
+        self.description = self.description or self.get_entrypoint_docstring(self.entrypoint)
+        if not params_set_by_user:
+            self.parameters = parameters
+        try:
+            if not isasyncgenfunction(self.entrypoint):
+                self.entrypoint = validate_call(self.entrypoint, config=dict(arbitrary_types_allowed=True))
+        except Exception as e:
+            print(f'Failed to add validate decorator to entrypoint: {e}')
+
+    def get_definition_for_prompt_dict(self) -> Optional[Dict[str, Any]]:
+        if self.entrypoint is None:
+            return None
+        type_hints = get_type_hints(self.entrypoint)
+        return_type = type_hints.get('return', None)
+        returns = None
+        if return_type is not None:
+            name = str(return_type)
+            if 'list' in name or 'dict' in name:
+                returns = name
+            else:
+                returns = return_type.__name__
+        function_info = {'name': self.name, 'description': self.description, 'arguments': self.parameters.get('properties', {}), 'returns': returns}
+        return function_info
+
+    def get_definition_for_prompt(self) -> Optional[str]:
+        function_info = self.get_definition_for_prompt_dict()
+        if function_info is not None:
+            return json.dumps(function_info, indent=2)
+        return None
+
+    def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
+        copy_entrypoint_args = entrypoint_args.copy()
+        if 'agent' in copy_entrypoint_args:
+            del copy_entrypoint_args['agent']
+        args_str = str(copy_entrypoint_args)
+        kwargs_str = str(sorted((call_args or {}).items()))
+        key_str = f'{self.name}:{args_str}:{kwargs_str}'
+        return md5(key_str.encode()).hexdigest()
+
+    def _get_cache_file_path(self, cache_key: str) -> str:
+        base_cache_dir = self.cache_dir or Path(gettempdir()) / 'agno_cache'
+        func_cache_dir = Path(base_cache_dir) / 'functions' / self.name
+        func_cache_dir.mkdir(parents=True, exist_ok=True)
+        return str(func_cache_dir / f'{cache_key}.json')
+
+    def _get_cached_result(self, cache_file: str) -> Optional[Any]:
+        cache_path = Path(cache_file)
+        if not cache_path.exists():
+            return None
+        try:
+            with cache_path.open('r') as f:
+                cache_data = json.load(f)
+            timestamp = cache_data.get('timestamp', 0)
+            result = cache_data.get('result')
+            if time() - timestamp <= self.cache_ttl:
+                return result
+            cache_path.unlink()
+        except Exception as e:
+            print(f'Error reading cache: {e}')
+        return None
+
+    def _save_to_cache(self, cache_file: str, result: Any):
+        try:
+            with open(cache_file, 'w') as f:
+                json.dump({'timestamp': time(), 'result': result}, f)
+        except Exception as e:
+            print(f'Error writing cache: {e}')
+
+
+class FunctionCall(BaseModel):
+    function: Function
+    arguments: Optional[Dict[str, Any]] = None
+    result: Optional[Any] = None
+    call_id: Optional[str] = None
+    error: Optional[str] = None
+
+    def get_call_str(self) -> str:
+        term_width = shutil.get_terminal_size().columns or 80
+        max_arg_len = max(20, (term_width - len(self.function.name) - 4) // 2)
+        if self.arguments is None:
+            return f'{self.function.name}()'
+        trimmed_arguments = {}
+        for k, v in self.arguments.items():
+            if isinstance(v, str) and len(str(v)) > max_arg_len:
+                trimmed_arguments[k] = '...'
+            else:
+                trimmed_arguments[k] = v
+        call_str = f'{self.function.name}({", ".join([f"{k}={v}" for k, v in trimmed_arguments.items()])})'
+        if len(call_str) > term_width:
+            return f'{self.function.name}(...)'
+        return call_str
+
+    def _handle_pre_hook(self):
+        if self.function.pre_hook is not None:
+            try:
+                pre_hook_args = {}
+                if 'agent' in signature(self.function.pre_hook).parameters:
+                    pre_hook_args['agent'] = self.function._agent
+                if 'fc' in signature(self.function.pre_hook).parameters:
+                    pre_hook_args['fc'] = self
+                self.function.pre_hook(**pre_hook_args)
+            except AgentRunException as e:
+                print(f'{e.__class__.__name__}: {e}')
+                self.error = str(e)
+                raise
+            except Exception as e:
+                print(f'Error in pre-hook callback: {e}')
+                print(e)
+
+    def _handle_post_hook(self):
+        if self.function.post_hook is not None:
+            try:
+                post_hook_args = {}
+                if 'agent' in signature(self.function.post_hook).parameters:
+                    post_hook_args['agent'] = self.function._agent
+                if 'fc' in signature(self.function.post_hook).parameters:
+                    post_hook_args['fc'] = self
+                self.function.post_hook(**post_hook_args)
+            except AgentRunException as e:
+                print(f'{e.__class__.__name__}: {e}')
+                self.error = str(e)
+                raise
+            except Exception as e:
+                print(f'Error in post-hook callback: {e}')
+                print(e)
+
+    def _build_entrypoint_args(self) -> Dict[str, Any]:
+        entrypoint_args = {}
+        if 'agent' in signature(self.function.entrypoint).parameters:
+            entrypoint_args['agent'] = self.function._agent
+        if 'fc' in signature(self.function.entrypoint).parameters:
+            entrypoint_args['fc'] = self
+        return entrypoint_args
+
+    def execute(self) -> bool:
+        if self.function.entrypoint is None:
+            return False
+        print(f'Running: {self.get_call_str()}')
+        function_call_success = False
+        self._handle_pre_hook()
+        entrypoint_args = self._build_entrypoint_args()
+        if self.function.cache_results and not isgenerator(self.function.entrypoint):
+            cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+            cache_file = self.function._get_cache_file_path(cache_key)
+            cached_result = self.function._get_cached_result(cache_file)
+            if cached_result is not None:
+                print(f'Cache hit for: {self.get_call_str()}')
+                self.result = cached_result
+                function_call_success = True
+                return function_call_success
+        try:
+            if self.arguments == {} or self.arguments is None:
+                result = self.function.entrypoint(**entrypoint_args)
+            else:
+                result = self.function.entrypoint(**entrypoint_args, **self.arguments)
+            if isgenerator(result):
+                self.result = result
+            else:
+                self.result = result
+                if self.function.cache_results:
+                    cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+                    cache_file = self.function._get_cache_file_path(cache_key)
+                    self.function._save_to_cache(cache_file, self.result)
+            function_call_success = True
+        except AgentRunException as e:
+            print(f'{e.__class__.__name__}: {e}')
+            self.error = str(e)
+            raise
+        except Exception as e:
+            print(f'Could not run function {self.get_call_str()}')
+            print(e)
+            self.error = str(e)
+            return function_call_success
+        self._handle_post_hook()
+        return function_call_success
+
+    async def _handle_pre_hook_async(self):
+        if self.function.pre_hook is not None:
+            try:
+                pre_hook_args = {}
+                if 'agent' in signature(self.function.pre_hook).parameters:
+                    pre_hook_args['agent'] = self.function._agent
+                if 'fc' in signature(self.function.pre_hook).parameters:
+                    pre_hook_args['fc'] = self
+                await self.function.pre_hook(**pre_hook_args)
+            except AgentRunException as e:
+                print(f'{e.__class__.__name__}: {e}')
+                self.error = str(e)
+                raise
+            except Exception as e:
+                print(f'Error in pre-hook callback: {e}')
+                print(e)
+
+    async def _handle_post_hook_async(self):
+        if self.function.post_hook is not None:
+            try:
+                post_hook_args = {}
+                if 'agent' in signature(self.function.post_hook).parameters:
+                    post_hook_args['agent'] = self.function._agent
+                if 'fc' in signature(self.function.post_hook).parameters:
+                    post_hook_args['fc'] = self
+                await self.function.post_hook(**post_hook_args)
+            except AgentRunException as e:
+                print(f'{e.__class__.__name__}: {e}')
+                self.error = str(e)
+                raise
+            except Exception as e:
+                print(f'Error in post-hook callback: {e}')
+                print(e)
+
+    async def aexecute(self) -> bool:
+        if self.function.entrypoint is None:
+            return False
+        print(f'Running: {self.get_call_str()}')
+        function_call_success = False
+        if iscoroutinefunction(self.function.pre_hook):
+            await self._handle_pre_hook_async()
+        else:
+            self._handle_pre_hook()
+        entrypoint_args = self._build_entrypoint_args()
+        if self.function.cache_results and not (isasyncgen(self.function.entrypoint) or isgenerator(self.function.entrypoint)):
+            cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+            cache_file = self.function._get_cache_file_path(cache_key)
+            cached_result = self.function._get_cached_result(cache_file)
+            if cached_result is not None:
+                print(f'Cache hit for: {self.get_call_str()}')
+                self.result = cached_result
+                function_call_success = True
+                return function_call_success
+        try:
+            if self.arguments == {} or self.arguments is None:
+                result = self.function.entrypoint(**entrypoint_args)
+                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
+                    self.result = result
+                else:
+                    self.result = await result
+            else:
+                result = self.function.entrypoint(**entrypoint_args, **self.arguments)
+                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
+                    self.result = result
+                else:
+                    self.result = await result
+            if self.function.cache_results and not (isgenerator(self.result) or isasyncgen(self.result)):
+                cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+                cache_file = self.function._get_cache_file_path(cache_key)
+                self.function._save_to_cache(cache_file, self.result)
+            function_call_success = True
+        except AgentRunException as e:
+            print(f'{e.__class__.__name__}: {e}')
+            self.error = str(e)
+            raise
+        except Exception as e:
+            print(f'Could not run function {self.get_call_str()}')
+            print(e)
+            self.error = str(e)
+            return function_call_success
+        if iscoroutinefunction(self.function.post_hook):
+            await self._handle_post_hook_async()
+        else:
+            self._handle_post_hook()
+        return function_call_success
+
+
+def tool(name: Optional[str] = None, description: Optional[str] = None, strict: Optional[bool] = None, sanitize_arguments: Optional[bool] = None,
+         show_result: Optional[bool] = None, stop_after_tool_call: Optional[bool] = None, pre_hook: Optional[Callable] = None, post_hook: Optional[Callable] = None,
+         cache_results: bool = False, cache_dir: Optional[str] = None, cache_ttl: int = 3600) -> Function:
+    """Decorator将函数转换为代理可以使用的函数。
+    Args：
+    name:可选[str]-覆盖函数名
+    description:可选[str]-函数描述的覆盖
+    strict:可选[bool]-用于严格参数检查的标志
+    sanctize_arguments：可选[bool]-如果为True，则在传递给函数之前对参数进行净化
+    show_result：可选[bool]-如果为True，则显示函数调用后的结果
+    stop_after_tool_call：可选[bool]-如果为True，代理将在函数调用后停止。
+    pre_hook：可选[Calable]-在函数执行之前运行的钩子。
+    post_hook：可选[Calable]-在函数执行后运行的钩子。
+    cache_results:bool-如果为True，则启用函数结果的缓存
+    cache_dir：可选[str]-存储缓存文件的目录
+    cache_ttl:int-缓存结果的生存时间（秒）
+    return:
+    Union[函数，可调用[[F]，函数]]：装饰函数或装饰器"""
+    def decorator(func: Callable) -> Function:
+        @wraps(func)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                print(f'Error in tool {func.__name__!r}: {e!r}', exc_info=True)
+                raise
+        @wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                print(f'Error in async tool {func.__name__!r}: {e!r}', exc_info=True)
+                raise
+        @wraps(func)
+        async def async_gen_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                print(f'Error in async generator tool {func.__name__!r}: {e!r}', exc_info=True)
+                raise
+        if isasyncgenfunction(func):
+            wrapper = async_gen_wrapper
+        elif iscoroutinefunction(func) or iscoroutine(func):
+            wrapper = async_wrapper
+        else:
+            wrapper = sync_wrapper
+        update_wrapper(wrapper, func)
+        return Function(**{'name': name or func.__name__, 'description': description or getdoc(func), 'entrypoint': wrapper, 'cache_results': cache_results, 'cache_dir': cache_dir, 'cache_ttl': cache_ttl})
+    if callable(name):
+        return decorator(name)
+    return decorator
+
+
+class Toolkit:
+    def __init__(self, name: str = 'toolkit', cache_results: bool = False, cache_ttl: int = 3600, cache_dir: Optional[str] = None):
+        self.name: str = name
+        self.functions: Dict[str, Function] = OrderedDict()
+        self.cache_results: bool = cache_results
+        self.cache_ttl: int = cache_ttl
+        self.cache_dir: Optional[str] = cache_dir
+
+    def register(self, function: Callable[..., Any], sanitize_arguments: bool = True):
+        try:
+            f = Function(name=function.__name__, entrypoint=function, sanitize_arguments=sanitize_arguments, cache_results=self.cache_results, cache_dir=self.cache_dir, cache_ttl=self.cache_ttl)
+            self.functions[f.name] = f
+            print(f'Function: {f.name} registered with {self.name}')
+        except Exception as e:
+            print(f'Failed to create Function for: {function.__name__}')
+            raise e
+
+    def instructions(self) -> str:
+        return ''
+
+    def __repr__(self):
+        return f'<{self.__class__.__name__} name={self.name} functions={list(self.functions.keys())}>'
+
+    def __str__(self):
+        return self.__repr__()
+
+
+class Media(BaseModel):
+    id: str
+    original_prompt: Optional[str] = None
+    revised_prompt: Optional[str] = None
+
+
+class VideoArtifact(Media):
+    url: str
+    eta: Optional[str] = None
+    length: Optional[str] = None
+
+
+class ImageArtifact(Media):
+    url: Optional[str] = None
+    content: Optional[bytes] = None
+    mime_type: Optional[str] = None
+    alt_text: Optional[str] = None
+
+
+class AudioArtifact(Media):
+    url: Optional[str] = None
+    base64_audio: Optional[str] = None
+    length: Optional[str] = None
+    mime_type: Optional[str] = None
+
+
+class Video(BaseModel):
+    filepath: Optional[Union[Path, str]] = None
+    content: Optional[Any] = None
+    format: Optional[str] = 'mp4'
+
+    def to_dict(self) -> Dict[str, Any]:
+        response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8') if self.content else None, 'filepath': self.filepath, 'format': self.format}
+        return {k: v for k, v in response_dict.items() if v is not None}
+
+    @classmethod
+    def from_artifact(cls, artifact: VideoArtifact) -> 'Video':
+        return cls(url=artifact.url)
+
+
+class Audio(BaseModel):
+    content: Optional[Any] = None
+    filepath: Optional[Union[Path, str]] = None
+    url: Optional[str] = None
+    format: Optional[str] = None
+
+    @property
+    def audio_url_content(self) -> Optional[bytes]:
+        if self.url:
+            return requests.get(self.url).content
+        else:
+            return None
+
+    def to_dict(self) -> Dict[str, Any]:
+        response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8')
+            if self.content
+            else None, 'filepath': self.filepath, 'format': self.format}
+        return {k: v for k, v in response_dict.items() if v is not None}
+
+    @classmethod
+    def from_artifact(cls, artifact: AudioArtifact) -> 'Audio':
+        return cls(url=artifact.url, content=artifact.base64_audio, format=artifact.mime_type)
+
+
+class AudioResponse(BaseModel):
+    id: Optional[str] = None
+    content: Optional[str] = None
+    expires_at: Optional[int] = None
+    transcript: Optional[str] = None
+    mime_type: Optional[str] = None
+    sample_rate: Optional[int] = 24000
+    channels: Optional[int] = 1
+
+    def to_dict(self) -> Dict[str, Any]:
+        response_dict = {'id': self.id, 'content': base64.b64encode(self.content).decode('utf-8')
+            if isinstance(self.content, bytes)
+            else self.content, 'expires_at': self.expires_at, 'transcript': self.transcript, 'mime_type': self.mime_type, 'sample_rate': self.sample_rate, 'channels': self.channels}
+        return {k: v for k, v in response_dict.items() if v is not None}
+
+
+class Image(BaseModel):
+    url: Optional[str] = None
+    filepath: Optional[Union[Path, str]] = None
+    content: Optional[Any] = None
+    format: Optional[str] = 'jpeg'
+    detail: Optional[str] = None
+    id: Optional[str] = None
+
+    @property
+    def image_url_content(self) -> Optional[bytes]:
+        if self.url:
+            return requests.get(self.url).content
+        else:
+            return None
+
+    def to_dict(self) -> Dict[str, Any]:
+        response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8')
+            if self.content
+            else None, 'filepath': self.filepath, 'url': self.url, 'detail': self.detail}
+        return {k: v for k, v in response_dict.items() if v is not None}
+
+    @classmethod
+    def from_artifact(cls, artifact: ImageArtifact) -> 'Image':
+        return cls(url=artifact.url)
+
+
+class File(BaseModel):
+    url: Optional[str] = None
+    filepath: Optional[Union[Path, str]] = None
+    content: Optional[Any] = None
+    mime_type: Optional[str] = None
+
+    @classmethod
+    def valid_mime_types(cls) -> List[str]:
+        return ['application/pdf', 'application/x-javascript', 'text/javascript', 'application/x-python', 'text/x-python', 'text/plain', 'text/html', 'text/css', 'text/md', 'text/csv', 'text/xml', 'text/rtf']
+
+    @property
+    def file_url_content(self) -> Optional[Tuple[bytes, str]]:
+        if self.url:
+            response = requests.get(self.url)
+            content = response.content
+            mime_type = response.headers.get('Content-Type', '').split(';')[0]
+            return content, mime_type
+        else:
+            return None
 
 
 class MessageReferences(BaseModel):
@@ -395,10 +1086,6 @@ class Model(ABC):
     instructions: Optional[List[str]] = None
     tool_message_role: str = 'tool'
     assistant_message_role: str = 'assistant'
-
-    def __post_init__(self):
-        if self.provider is None and self.name is not None:
-            self.provider = f'{self.name} ({self.id})'
 
     def to_dict(self) -> Dict[str, Any]:
         fields = {'name', 'id', 'provider'}
@@ -952,3 +1639,351 @@ class Model(ABC):
             setattr(new_model, k, deepcopy(v, memo))
         new_model.clear()
         return new_model
+
+
+@dataclass
+class Ollama(Model):
+    id: str = 'llama3.1:8b'
+    name: str = 'Ollama'
+    provider: str = 'Ollama'
+    supports_native_structured_outputs: bool = True
+    format: Optional[Any] = None
+    options: Optional[Any] = None
+    keep_alive: Optional[Union[float, str]] = None
+    request_params: Optional[Dict[str, Any]] = None
+    host: Optional[str] = None
+    timeout: Optional[Any] = None
+    client_params: Optional[Dict[str, Any]] = None
+    client: Optional[OllamaClient] = None
+    async_client: Optional[AsyncOllamaClient] = None
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        base_params = {'host': self.host, 'timeout': self.timeout}
+        client_params = {k: v for k, v in base_params.items() if v is not None}
+        if self.client_params:
+            client_params.update(self.client_params)
+        return client_params
+
+    def get_client(self) -> OllamaClient:
+        if self.client is not None:
+            return self.client
+        self.client = OllamaClient(**self._get_client_params())
+        return self.client
+
+    def get_async_client(self) -> AsyncOllamaClient:
+        if self.async_client is not None:
+            return self.async_client
+        return AsyncOllamaClient(**self._get_client_params())
+
+    @property
+    def request_kwargs(self) -> Dict[str, Any]:
+        base_params = {'format': self.format, 'options': self.options, 'keep_alive': self.keep_alive, 'request_params': self.request_params}
+        request_params = {k: v for k, v in base_params.items() if v is not None}
+        if self._tools is not None and len(self._tools) > 0:
+            request_params['tools'] = self._tools
+            for tool in request_params['tools']:
+                if 'parameters' in tool['function'] and 'properties' in tool['function']['parameters']:
+                    for _, obj in tool['function']['parameters'].get('properties', {}).items():
+                        if 'type' in obj and isinstance(obj['type'], list) and len(obj['type']) > 1:
+                            obj['type'] = obj['type'][0]
+        if self.request_params:
+            request_params.update(self.request_params)
+        return request_params
+
+    def to_dict(self) -> Dict[str, Any]:
+        model_dict = super().to_dict()
+        model_dict.update({'format': self.format, 'options': self.options, 'keep_alive': self.keep_alive, 'request_params': self.request_params})
+        if self._tools is not None:
+            model_dict['tools'] = self._tools
+        cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
+        return cleaned_dict
+
+    def _format_message(self, message: Message) -> Dict[str, Any]:
+        _message: Dict[str, Any] = {'role': message.role, 'content': message.content}
+        if message.role == 'user':
+            if message.images is not None:
+                message_images = []
+                for image in message.images:
+                    if image.url is not None:
+                        message_images.append(image.image_url_content)
+                    if image.filepath is not None:
+                        message_images.append(image.filepath)
+                    if image.content is not None and isinstance(image.content, bytes):
+                        message_images.append(image.content)
+                if message_images:
+                    _message['images'] = message_images
+        return _message
+
+    def _prepare_request_kwargs_for_invoke(self) -> Dict[str, Any]:
+        request_kwargs = self.request_kwargs
+        if self.response_format is not None and self.structured_outputs:
+            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+                print('Using structured outputs')
+                format_schema = self.response_format.model_json_schema()
+                if 'format' not in request_kwargs:
+                    request_kwargs['format'] = format_schema
+        return request_kwargs
+
+    def invoke(self, messages: List[Message]) -> Mapping[str, Any]:
+        request_kwargs = self._prepare_request_kwargs_for_invoke()
+        return self.get_client().chat(model=self.id.strip(), messages=[self._format_message(m) for m in messages], **request_kwargs)
+
+    async def ainvoke(self, messages: List[Message]) -> Mapping[str, Any]:
+        request_kwargs = self._prepare_request_kwargs_for_invoke()
+        return await self.get_async_client().chat(model=self.id.strip(), messages=[self._format_message(m) for m in messages], **request_kwargs)
+
+    def invoke_stream(self, messages: List[Message]) -> Iterator[Mapping[str, Any]]:
+        yield from self.get_client().chat(model=self.id, messages=[self._format_message(m) for m in messages], stream=True, **self.request_kwargs)
+
+    async def ainvoke_stream(self, messages: List[Message]) -> Any:
+        async_stream = await self.get_async_client().chat(model=self.id.strip(), messages=[self._format_message(m) for m in messages], stream=True, **self.request_kwargs)
+        async for chunk in async_stream:
+            yield chunk
+
+    def parse_provider_response(self, response: ChatResponse) -> ModelResponse:
+        model_response = ModelResponse()
+        response_message: OllamaMessage = response.get('message')
+        try:
+            if self.response_format is not None and self.structured_outputs and issubclass(self.response_format, BaseModel):
+                parsed_object = response_message.content
+                if parsed_object is not None:
+                    model_response.parsed = parsed_object
+        except Exception as e:
+            print(f'Error retrieving structured outputs: {e}')
+        if response_message.get('role') is not None:
+            model_response.role = response_message.get('role')
+        if response_message.get('content') is not None:
+            model_response.content = response_message.get('content')
+        if response_message.get('tool_calls') is not None:
+            if model_response.tool_calls is None:
+                model_response.tool_calls = []
+            for block in response_message.get('tool_calls'):
+                tool_call = block.get('function')
+                tool_name = tool_call.get('name')
+                tool_args = tool_call.get('arguments')
+                function_def = {'name': tool_name, 'arguments': (json.dumps(tool_args) if tool_args is not None else None)}
+                model_response.tool_calls.append({'type': 'function', 'function': function_def})
+        if response.get('done'):
+            model_response.response_usage = {'input_tokens': response.get('prompt_eval_count', 0), 'output_tokens': response.get('eval_count', 0), 'total_tokens': response.get('prompt_eval_count', 0) + response.get('eval_count', 0), 'additional_metrics': {'total_duration': response.get('total_duration', 0), 'load_duration': response.get('load_duration', 0), 'prompt_eval_duration': response.get('prompt_eval_duration', 0), 'eval_duration': response.get('eval_duration', 0)}}
+        return model_response
+
+    def parse_provider_response_delta(self, response_delta: ChatResponse) -> ModelResponse:
+        model_response = ModelResponse()
+        response_message = response_delta.get('message')
+        if response_message is not None:
+            content_delta = response_message.get('content')
+            if content_delta is not None and content_delta != '':
+                model_response.content = content_delta
+            tool_calls = response_message.get('tool_calls')
+            if tool_calls is not None:
+                for tool_call in tool_calls:
+                    tc = tool_call.get('function')
+                    tool_name = tc.get('name')
+                    tool_args = tc.get('arguments')
+                    function_def = {'name': tool_name, 'arguments': json.dumps(tool_args) if tool_args is not None else None}
+                    model_response.tool_calls.append({'type': 'function', 'function': function_def})
+        if response_delta.get('done'):
+            model_response.response_usage = {'input_tokens': response_delta.get('prompt_eval_count', 0), 'output_tokens': response_delta.get('eval_count', 0), 'total_tokens': response_delta.get('prompt_eval_count', 0) + response_delta.get('eval_count', 0), 'additional_metrics': {'total_duration': response_delta.get('total_duration', 0), 'load_duration': response_delta.get('load_duration', 0), 'prompt_eval_duration': response_delta.get('prompt_eval_duration', 0), 'eval_duration': response_delta.get('eval_duration', 0)}}
+        return model_response
+
+
+class ToolCall:
+    def __init__(self, tool_calls: List[Dict[str, Any]] = None, response_usage: Optional[Mapping[str, Any]] = None, response_is_tool_call=False, is_closing_tool_call_tag=False, tool_calls_counter=0, tool_call_content=''):
+        self.tool_calls = tool_calls or []
+        self.response_usage = response_usage
+        self.response_is_tool_call = response_is_tool_call
+        self.is_closing_tool_call_tag = is_closing_tool_call_tag
+        self.tool_calls_counter = tool_calls_counter
+        self.tool_call_content = tool_call_content
+
+
+class OllamaTools(Ollama):
+    @property
+    def request_kwargs(self) -> Dict[str, Any]:
+        base_params: Dict[str, Any] = {'format': self.format, 'options': self.options, 'keep_alive': self.keep_alive, 'request_params': self.request_params}
+        request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
+        if self.request_params:
+            request_params.update(self.request_params)
+        return request_params
+
+    def extract_tool_call_from_string(self, text: str, start_tag: str = '<tool_call>', end_tag: str = '</tool_call>'):
+        start_index = text.find(start_tag) + len(start_tag)
+        end_index = text.find(end_tag)
+        return text[start_index:end_index].strip()
+
+    def parse_provider_response(self, response: ChatResponse) -> ModelResponse:
+        model_response = ModelResponse()
+        response_message = response.get('message')
+        if response_message.get('role') is not None:
+            model_response.role = response_message.get('role')
+        content = response_message.get('content')
+        if content is not None:
+            model_response.content = content
+            if '<tool_call>' in content and '</tool_call>' in content:
+                if model_response.tool_calls is None:
+                    model_response.tool_calls = []
+                tool_call_responses = content.split('</tool_call>')
+                for tool_call_response in tool_call_responses:
+                    if tool_call_response != tool_call_responses[-1]:
+                        tool_call_response += '</tool_call>'
+                    if '<tool_call>' in tool_call_response and '</tool_call>' in tool_call_response:
+                        tool_call_content = self.extract_tool_call_from_string(tool_call_response)
+                        try:
+                            tool_call_dict = json.loads(tool_call_content)
+                        except json.JSONDecodeError:
+                            raise ValueError(f'Could not parse tool call from: {tool_call_content}')
+                        tool_call_name = tool_call_dict.get('name')
+                        tool_call_args = tool_call_dict.get('arguments')
+                        function_def = {'name': tool_call_name, 'arguments': json.dumps(tool_call_args) if tool_call_args is not None else None}
+                        model_response.tool_calls.append({'type': 'function', 'function': function_def})
+        if response.get('done'):
+            model_response.response_usage = Dot(input_tokens=response.get('prompt_eval_count', 0), output_tokens=response.get('eval_count', 0), total_duration=response.get('total_duration', 0), load_duration=response.get('load_duration', 0), prompt_eval_duration=response.get('prompt_eval_duration', 0), eval_duration=response.get('eval_duration', 0))
+            if model_response.response_usage.input_tokens or model_response.response_usage.output_tokens:
+                model_response.response_usage.total_tokens = (model_response.response_usage.input_tokens + model_response.response_usage.output_tokens)
+        return model_response
+
+    def _create_function_call_result(self, fc: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer) -> Message:
+        content = ('<tool_response>\n'
+            + json.dumps({'name': fc.function.name, 'content': output if success else fc.error})
+            + '\n</tool_response>')
+        return Message(role=self.tool_message_role, content=content, tool_call_id=fc.call_id, tool_name=fc.function.name, tool_args=fc.arguments, tool_call_error=not success, stop_after_tool_call=fc.function.stop_after_tool_call, metrics=MessageMetrics(time=timer.elapsed))
+
+    def format_function_call_results(self, function_call_results: List[Message], messages: List[Message]) -> None:
+        if len(function_call_results) > 0:
+            for _fc_message in function_call_results:
+                _fc_message.content = ('<tool_response>\n'
+                    + json.dumps({'name': _fc_message.tool_name, 'content': _fc_message.content})
+                    + '\n</tool_response>')
+                messages.append(_fc_message)
+
+    def _prepare_function_calls(self, assistant_message: Message, messages: List[Message], model_response: ModelResponse) -> List[FunctionCall]:
+        if model_response.content is None:
+            model_response.content = ''
+        if model_response.tool_calls is None:
+            model_response.tool_calls = []
+        start_tag: str = '<tool_call>'
+        end_tag: str = '</tool_call>'
+        text = assistant_message.get_content_string()
+        while start_tag in text and end_tag in text:
+            start_index = text.find(start_tag)
+            end_index = text.find(end_tag) + len(end_tag)
+            text = text[:start_index] + text[end_index:]
+        model_response.content = str(text)
+        model_response.content += '\n\n'
+        function_calls_to_run = self.get_function_calls_to_run(assistant_message, messages)
+        return function_calls_to_run
+
+    def process_response_stream(self, messages: List[Message], assistant_message: Message, stream_data) -> Iterator[ModelResponse]:
+        tool_call_data = ToolCall()
+        for response_delta in self.invoke_stream(messages=messages):
+            model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
+            if model_response_delta:
+                yield from self._populate_stream_data_and_assistant_message(stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta)
+
+    async def aprocess_response_stream(self, messages: List[Message], assistant_message: Message, stream_data) -> AsyncIterator[ModelResponse]:
+        tool_call_data = ToolCall()
+        async for response_delta in self.ainvoke_stream(messages=messages):
+            model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
+            if model_response_delta:
+                for model_response in self._populate_stream_data_and_assistant_message(stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta):
+                    yield model_response
+
+    def parse_provider_response_delta(self, response_delta, tool_call_data: ToolCall) -> ModelResponse:
+        model_response = ModelResponse()
+        response_message = response_delta.get('message')
+        if response_message is not None:
+            content_delta = response_message.get('content', '')
+            if content_delta is not None and content_delta != '':
+                tool_call_data.tool_call_content += content_delta
+            if not tool_call_data.response_is_tool_call and '<tool' in content_delta:
+                tool_call_data.response_is_tool_call = True
+            if tool_call_data.response_is_tool_call:
+                if '<tool' in content_delta:
+                    tool_call_data.tool_calls_counter += 1
+                if tool_call_data.tool_call_content.strip().endswith('</tool_call>'):
+                    tool_call_data.tool_calls_counter -= 1
+                if tool_call_data.tool_calls_counter == 0 and content_delta.strip().endswith('>'):
+                    tool_call_data.response_is_tool_call = False
+                    tool_call_data.is_closing_tool_call_tag = True
+                    try:
+
+                        tool_calls = []
+                        response_content = tool_call_data.tool_call_content
+                        if '<tool_call>' in response_content and '</tool_call>' in response_content:
+                            tool_call_responses = response_content.split('</tool_call>')
+                            for tool_call_response in tool_call_responses:
+                                if tool_call_response != tool_call_responses[-1]:
+                                    tool_call_response += '</tool_call>'
+                                if '<tool_call>' in tool_call_response and '</tool_call>' in tool_call_response:
+                                    tool_call_content = self.extract_tool_call_from_string(tool_call_response)
+                                    try:
+                                        tool_call_dict = json.loads(tool_call_content)
+                                    except json.JSONDecodeError:
+                                        raise ValueError(f'Could not parse tool call from: {tool_call_content}')
+                                    tool_call_name = tool_call_dict.get('name')
+                                    tool_call_args = tool_call_dict.get('arguments')
+                                    function_def = {'name': tool_call_name}
+                                    if tool_call_args is not None:
+                                        function_def['arguments'] = json.dumps(tool_call_args)
+                                    tool_calls.append({'type': 'function', 'function': function_def})
+
+                        model_response.tool_calls = tool_calls
+                        tool_call_data = ToolCall()
+                    except Exception as e:
+                        print(e)
+                        pass
+            if not tool_call_data.response_is_tool_call and content_delta is not None:
+                if tool_call_data.is_closing_tool_call_tag and content_delta.strip().endswith('>'):
+                    tool_call_data.is_closing_tool_call_tag = False
+                model_response.content = content_delta
+        if response_delta.get('done'):
+            model_response.response_usage = {'input_tokens': response_delta.get('prompt_eval_count', 0), 'output_tokens': response_delta.get('eval_count', 0), 'total_tokens': response_delta.get('prompt_eval_count', 0) + response_delta.get('eval_count', 0), 'additional_metrics': {'total_duration': response_delta.get('total_duration', 0), 'load_duration': response_delta.get('load_duration', 0), 'prompt_eval_duration': response_delta.get('prompt_eval_duration', 0), 'eval_duration': response_delta.get('eval_duration', 0)}}
+        return model_response
+
+    def get_instructions_to_generate_tool_calls(self) -> List[str]:
+        if self._functions is not None:
+            return [
+                '在第一回合，你没有<tool_results>，所以你不应该编造结果。',
+                '要回复用户消息，一次只能使用一个工具。',
+                '使用工具时，只能通过工具调用进行响应。没有别的。不要添加任何额外的注释、解释或空格',
+                '在任务完成或达到最大迭代次数10之前，不要停止调用函数。']
+        return []
+
+    def get_tool_call_prompt(self) -> Optional[str]:
+        if self._functions is not None and len(self._functions) > 0:
+            tool_call_prompt = dedent('''
+            您是一个使用语言模型调用的函数。
+            您将在<tools></tools>XML标签中获得函数签名。
+            您可以使用代理框架进行推理和规划，以帮助用户查询。
+            请调用一个函数，并等待在下一次迭代中向您提供函数结果。
+            不要对要插入函数的值做出假设。
+            调用函数时，不要添加任何额外的注释、解释或空格。
+            调用函数后，结果将在<tool_response></tool_response>XML标签中提供给您。
+            如果由于函数尚未执行而不存在<tool_response>XML标记，则不要对工具结果做出假设。
+            一旦你得到结果，就分析它们，并在需要时调用另一个函数。
+            您的最终响应应该直接回答用户查询，并对函数调用的结果进行分析或总结。
+            ''')
+            tool_call_prompt += '\nHere are the available tools:'
+            tool_call_prompt += '\n<tools>\n'
+            tool_definitions: List[str] = []
+            for _f_name, _function in self._functions.items():
+                _function_def = _function.get_definition_for_prompt()
+                if _function_def:
+                    tool_definitions.append(_function_def)
+            tool_call_prompt += '\n'.join(tool_definitions)
+            tool_call_prompt += '\n</tools>\n\n'
+            tool_call_prompt += dedent('''\
+            对您将进行的每个工具调用使用以下pydantic模型json模式: {'title': 'FunctionCall', 'type': 'object', 'properties': {'arguments': {'title': 'Arguments', 'type': 'object'}, 'name': {'title': 'Name', 'type': 'string'}}, 'required': ['arguments', 'name']}
+            对于每个函数调用，返回一个json对象，其中包含函数名和参数 <tool_call></tool_call> XML标签如下:
+            <tool_call>
+            {'arguments': <args-dict>, 'name': <function-name>}
+            </tool_call>\n
+            ''')
+            return tool_call_prompt
+        return None
+
+    def get_system_message_for_model(self) -> Optional[str]:
+        return self.get_tool_call_prompt()
+
+    def get_instructions_for_model(self) -> Optional[List[str]]:
+        return self.get_instructions_to_generate_tool_calls()

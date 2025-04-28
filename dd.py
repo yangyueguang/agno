@@ -2,16 +2,13 @@ import json
 from textwrap import dedent
 from typing import Dict, Iterator, Optional, Union, Any, Optional, Iterable
 from agno.storage import SqliteStorage
-from agno.workflow import RunEvent, RunResponse, Workflow
+from agno.agent import Agent, RunEvent, RunResponse, Workflow, Knowledge
 from pydantic import BaseModel, Field
-from agno.agent import Agent
-from agno.ollama import Ollama
+from agno.models import Ollama, Toolkit
 from agno.team import Team
-from agno.run import RunResponse
-
+from agno.memory import RunResponse
 from duckduckgo_search import DDGS
 import yfinance as yf
-from agno.tools import Toolkit
 
 
 class YFinanceTools(Toolkit):
@@ -124,6 +121,7 @@ class NewspaperTools(Toolkit):
         article.parse()
         return article.text
 
+
 class StockAnalysis(BaseModel):
     symbol: str
     company_name: str
@@ -149,6 +147,19 @@ print(response.content)
 response = team.run('关于NVDA的新闻是什么？')
 assert isinstance(response.content, CompanyAnalysis)
 print(response.content)
+
+agent = Agent(model=Ollama(), description='你是泰国菜专家！', instructions=[
+        '在你的知识库中搜索泰国食谱。如果这个问题更适合网络，请搜索网络以填补空白。更喜欢你知识库中的信息，而不是网络结果。'
+    ], knowledge=Knowledge(urls=['https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf']), tools=[lambda x: 'hello'], show_tool_calls=True, markdown=True)
+agent.knowledge.load()
+agent.print_response('如何在椰奶汤中烹制鸡肉和galangal', stream=True)
+agent.print_response('泰国咖喱的历史是什么?', stream=True)
+
+
+web_agent = Agent(name='Web Agent', role='在网上搜索信息', model=Ollama(), tools=[], instructions='始终包含来源', show_tool_calls=True, markdown=True)
+finance_agent = Agent(name='Finance Agent', role='获取财务数据', model=Ollama(), tools=[], instructions='使用表格显示数据', show_tool_calls=True, markdown=True)
+agent_team = Team(mode='coordinate', members=[web_agent, finance_agent], model=Ollama(), success_criteria='一份全面的财经新闻报道，有清晰的章节和数据驱动的见解。', instructions=['始终包含来源', '使用表格显示数据'], show_tool_calls=True, markdown=True)
+agent_team.print_response("AI半导体公司的市场前景和财务业绩如何?", stream=True)
 
 class Article(BaseModel):
     title: str = Field(..., description='Title of the article.')
