@@ -176,7 +176,7 @@ class Reader:
             doc_reader = DocumentReader(url)
         documents = []
         for page_number, page in enumerate(doc_reader.pages, start=1):
-            documents.append(Document(name=doc_name, id=f'{doc_name}_{page_number}', meta_data={'page': page_number},
+            documents.append(Document(name=doc_name, id=f'{doc_name}_{page_number}', meta_data={'url': url, 'page': page_number},
                                       content=page.extract_text()))
         return [i for document in documents for i in self.chunk_document(document)] if self.chunk_size > 0 else documents
 
@@ -289,15 +289,13 @@ class ChromaDb:
         if self.client:
             try:
                 collections: Collection = self.client.get_collection(name=self.collection_name)
-                for collection in collections:
-                    if name in collection:
-                        return True
+                return bool(collections.get(where={"url": name})['ids'])
             except Exception as e:
                 print(f'Document with given name does not exist: {e}')
         return False
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        print(f'Inserting {len(documents)} documents')
+        print(f'插入 {len(documents)} 个文档')
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
@@ -305,10 +303,9 @@ class ChromaDb:
         if not self._collection:
             self._collection = self.client.get_collection(name=self.collection_name)
         for document in documents:
-            document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace('\x00', '\ufffd')
             doc_id = md5(cleaned_content.encode()).hexdigest()
-            docs_embeddings.append(document.embedding)
+            docs_embeddings.append(document.embed(embedder=self.embedder))
             docs.append(cleaned_content)
             ids.append(doc_id)
             docs_metadata.append(document.meta_data)
@@ -410,9 +407,8 @@ class ChromaDb:
 class Knowledge:
     """ 知识库 支持文档 csv,doc,docx,pdf,txt,html,website"""
     def __init__(self, urls: List[str], database: str = 'local', num_documents=5, optimize_on=1000, docs: List[Document] = None):
-        urls = [u for u in urls if u]
         self.vector_db = ChromaDb(database)
-        self.urls = [url for url in urls if not self.vector_db.name_exists(name=url)]
+        self.urls = [url for url in urls if url and not self.vector_db.name_exists(name=url)]
         self.docs = docs
         self.num_documents = num_documents
         self.optimize_on = optimize_on
