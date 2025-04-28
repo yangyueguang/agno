@@ -6,8 +6,6 @@ import os
 import re
 import json
 import httpx
-import aiofiles
-import asyncio
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -155,9 +153,6 @@ class Reader:
     def read(self, obj: Any) -> List[Document]:
         raise NotImplementedError
 
-    async def async_read(self, obj: Any) -> List[Document]:
-        raise NotImplementedError
-
     def chunk_document(self, document: Document) -> List[Document]:
         return self.chunking_strategy.chunk(document)
 
@@ -224,15 +219,7 @@ class DocxReader(Reader):
         return documents
 
 
-class BasePDFReader(Reader):
-    def _build_chunked_documents(self, documents: List[Document]) -> List[Document]:
-        chunked_documents: List[Document] = []
-        for document in documents:
-            chunked_documents.extend(self.chunk_document(document))
-        return chunked_documents
-
-
-class PDFReader(BasePDFReader):
+class PDFReader(Reader):
     def read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
         try:
             if isinstance(pdf, str):
@@ -250,12 +237,10 @@ class PDFReader(BasePDFReader):
         documents = []
         for page_number, page in enumerate(doc_reader.pages, start=1):
             documents.append(Document(name=doc_name, id=f'{doc_name}_{page_number}', meta_data={'page': page_number}, content=page.extract_text()))
-        if self.chunk:
-            return self._build_chunked_documents(documents)
-        return documents
+        return [i for document in documents for i in self.chunk_document(document)] if self.chunk else documents
 
 
-class PDFUrlReader(BasePDFReader):
+class PDFUrlReader(Reader):
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError('No url provided')
@@ -281,9 +266,7 @@ class PDFUrlReader(BasePDFReader):
         documents = []
         for page_number, page in enumerate(doc_reader.pages, start=1):
             documents.append(Document(name=doc_name, id=f'{doc_name}_{page_number}', meta_data={'page': page_number}, content=page.extract_text()))
-        if self.chunk:
-            return self._build_chunked_documents(documents)
-        return documents
+        return [i for document in documents for i in self.chunk_document(document)] if self.chunk else documents
 
 
 class TextReader(Reader):
@@ -358,46 +341,29 @@ class WebsiteReader(Reader):
         self._visited = _visited or set()
         self._urls_to_crawl = _urls_to_crawl or []
 
-    def delay(self, min_seconds=1, max_seconds=3):
-        sleep_time = random.uniform(min_seconds, max_seconds)
-        time.sleep(sleep_time)
-
-    async def async_delay(self, min_seconds=1, max_seconds=3):
-        sleep_time = random.uniform(min_seconds, max_seconds)
-        await asyncio.sleep(sleep_time)
-
-    def _extract_main_content(self, soup: BeautifulSoup) -> str:
-        for tag in ['article', 'main']:
-            element = soup.find(tag)
-            if element:
-                return element.get_text(strip=True, separator=' ')
-        for class_name in ['content', 'main-content', 'post-content']:
-            element = soup.find(class_=class_name)
-            if element:
-                return element.get_text(strip=True, separator=' ')
-        return ''
-
-    def crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
+    def read(self, url: str) -> List[Document]:
+        print(f'Reading: {url}')
         num_links = 0
         crawler_result: Dict[str, str] = {}
         domain_parts = urlparse(url).netloc.split('.')
         primary_domain = '.'.join(domain_parts[-2:])
-        self._urls_to_crawl.append((url, starting_depth))
+        self._urls_to_crawl.append((url, 1))
         while self._urls_to_crawl:
             current_url, current_depth = self._urls_to_crawl.pop(0)
             if current_url in self._visited or not urlparse(current_url).netloc.endswith(primary_domain) or current_depth > self.max_depth or num_links >= self.max_links:
                 continue
             self._visited.add(current_url)
-            self.delay()
+            time.sleep(random.uniform(1, 3))
             try:
                 print(f'Crawling: {current_url}')
                 response = httpx.get(current_url, timeout=10)
                 response.raise_for_status()
                 soup = BeautifulSoup(response.content, 'html.parser')
-                main_content = self._extract_main_content(soup)
-                if main_content:
-                    crawler_result[current_url] = main_content
-                    num_links += 1
+                for tag in ['article', 'main', 'content', 'main-content', 'post-content']:
+                    if element := soup.find(tag) if tag in ['article', 'main'] else soup.find(class_=tag):
+                        crawler_result[current_url] = element.get_text(strip=True, separator=' ')
+                        num_links += 1
+                        break
                 for link in soup.find_all('a', href=True):
                     if not isinstance(link, Tag):
                         continue
@@ -413,70 +379,10 @@ class WebsiteReader(Reader):
             except Exception as e:
                 print(f'Failed to crawl: {current_url}: {e}')
                 pass
-        return crawler_result
-
-    async def async_crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
-        num_links = 0
-        crawler_result: Dict[str, str] = {}
-        domain_parts = urlparse(url).netloc.split('.')
-        primary_domain = '.'.join(domain_parts[-2:])
-        self._visited = set()
-        self._urls_to_crawl = [(url, starting_depth)]
-        async with httpx.AsyncClient() as client:
-            while self._urls_to_crawl and num_links < self.max_links:
-                current_url, current_depth = self._urls_to_crawl.pop(0)
-                if current_url in self._visited or not urlparse(current_url).netloc.endswith(primary_domain) or current_depth > self.max_depth or num_links >= self.max_links:
-                    continue
-                self._visited.add(current_url)
-                await self.async_delay()
-                try:
-                    print(f'Crawling asynchronously: {current_url}')
-                    response = await client.get(current_url, timeout=10, follow_redirects=True)
-                    response.raise_for_status()
-                    soup = BeautifulSoup(response.content, 'html.parser')
-                    main_content = self._extract_main_content(soup)
-                    if main_content:
-                        crawler_result[current_url] = main_content
-                        num_links += 1
-                    for link in soup.find_all('a', href=True):
-                        if not isinstance(link, Tag):
-                            continue
-                        href_str = str(link['href'])
-                        full_url = urljoin(current_url, href_str)
-                        if not isinstance(full_url, str):
-                            continue
-                        parsed_url = urlparse(full_url)
-                        if parsed_url.netloc.endswith(primary_domain) and not any(parsed_url.path.endswith(ext) for ext in ['.pdf', '.jpg', '.png']):
-                            full_url_str = str(full_url)
-                            if full_url_str not in self._visited and (full_url_str, current_depth + 1) not in self._urls_to_crawl:
-                                self._urls_to_crawl.append((full_url_str, current_depth + 1))
-                except Exception as e:
-                    print(f'Failed to crawl asynchronously: {current_url}: {e}')
-        return crawler_result
-
-    def read(self, url: str) -> List[Document]:
-        print(f'Reading: {url}')
-        crawler_result = self.crawl(url)
         documents = []
         for crawled_url, crawled_content in crawler_result.items():
             if self.chunk:
                 documents.extend(self.chunk_document(Document(name=url, id=str(crawled_url), meta_data={'url': str(crawled_url)}, content=crawled_content)))
             else:
                 documents.append(Document(name=url, id=str(crawled_url), meta_data={'url': str(crawled_url)}, content=crawled_content))
-        return documents
-
-    async def async_read(self, url: str) -> List[Document]:
-        print(f'Reading asynchronously: {url}')
-        crawler_result = await self.async_crawl(url)
-        documents = []
-        async def process_document(crawled_url, crawled_content):
-            if self.chunk:
-                doc = Document(name=url, id=str(crawled_url), meta_data={'url': str(crawled_url)}, content=crawled_content)
-                return self.chunk_document(doc)
-            else:
-                return [Document(name=url, id=str(crawled_url), meta_data={'url': str(crawled_url)}, content=crawled_content)]
-        tasks = [process_document(crawled_url, crawled_content) for crawled_url, crawled_content in crawler_result.items()]
-        results = await asyncio.gather(*tasks)
-        for doc_list in results:
-            documents.extend(doc_list)
         return documents
