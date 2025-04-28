@@ -101,12 +101,8 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
         elif type_origin in [Union, UnionType]:
             types = []
             for arg in type_args:
-                try:
-                    schema = get_json_schema_for_arg(arg)
-                    if schema:
-                        types.append(schema)
-                except Exception:
-                    continue
+                if schema := get_json_schema_for_arg(arg):
+                    types.append(schema)
             return {'anyOf': types} if types else None
     types = {
         'number': ['int', 'float', 'complex', 'Decimal'],

@@ -223,11 +223,8 @@ class Team:
         for member in self.members:
             self._initialize_member(member)
 
-    def run(self, message: Union[str, List, Dict, Message], *, stream: bool = False,          stream_intermediate_steps: bool = False, retries: Optional[int] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, **kwargs: Any) -> Union[TeamRunResponse, Iterator[TeamRunResponse]]:
+    def run(self, message: Union[str, List, Dict, Message], *, stream: bool = False, stream_intermediate_steps: bool = False, retries=3, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, **kwargs: Any) -> Union[TeamRunResponse, Iterator[TeamRunResponse]]:
         self._initialize_team()
-        retries = retries or 3
-        if retries < 1:
-            raise ValueError('Retries must be at least 1')
         show_tool_calls = self.show_tool_calls
         self.read_from_storage()
         if self.memory is None:

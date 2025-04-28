@@ -4,6 +4,7 @@ import json
 import time
 import yaml
 import string
+import chromadb
 from rich.box import HEAVY
 from rich.panel import Panel
 from rich.prompt import Prompt
@@ -26,88 +27,59 @@ from agno.models import Ollama, Audio, AudioArtifact, AudioResponse, File, Image
 from agno.storage import Storage, AgentSession, WorkflowSession
 from agno.memory import Memory, SessionSummary, AgentMemory, AgentRun, RunEvent, RunResponse, RunResponseExtraData, TeamRunResponse, RunMessages, NextAction, ReasoningStep, ReasoningSteps, get_deepseek_reasoning, get_openai_reasoning, aget_deepseek_reasoning, get_next_action, update_messages_with_reasoning, aget_openai_reasoning
 from hashlib import md5
-from chromadb import Client as ChromaDbClient, PersistentClient as PersistentChromaDbClient
-from chromadb.api.client import ClientAPI
-from chromadb.api.models.Collection import Collection
-from chromadb.api.types import GetResult, IncludeEnum, QueryResult
 import random
 import csv
 import io
+import inspect
 import requests
-from io import BytesIO
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup, Tag
 from pypdf import PdfReader as DocumentReader
 from docx import Document as DocxDocument
 from ollama import Client as OllamaClient
 import collections.abc
-import inspect
 from types import GeneratorType
 from agno.memory import WorkflowMemory, WorkflowRun
 
 
 class Embedder:
-    def __init__(self, id: str = 'llama3.1:8b', dimensions: int = 4096, host: str = None,
-                 timeout: Any = None, options: Any = None,
-                 client_kwargs: dict = None, ollama_client: OllamaClient = None):
-        self.id = id
-        self.dimensions = dimensions
+    def __init__(self, model='llama3.1:8b', host='', timeout=0, options: Any = None, client_kwargs: dict = None):
+        self.model = model
         self.options = options
         client_kwargs = client_kwargs or {}
         client_kwargs['host'] = host
         client_kwargs['timeout'] = timeout
-        self.ollama_client = ollama_client or OllamaClient(**{k: v for k, v in client_kwargs.items() if v})
+        self.ollama_client = OllamaClient(**{k: v for k, v in client_kwargs.items() if v})
 
-    def get_embedding(self, text: str) -> List[float]:
-        try:
-            kwargs = {'options': self.options} if self.options else {}
-            response = self.ollama_client.embed(input=text, model=self.id, **kwargs)
-            embedding = []
-            if response and 'embeddings' in response:
-                embeddings = response['embeddings']
-                if isinstance(embeddings, list) and len(embeddings) > 0 and isinstance(embeddings[0], list):
-                    embedding = embeddings[0]
-                elif isinstance(embeddings, list) and all(isinstance(x, (int, float)) for x in embeddings):
-                    embedding = embeddings
-            if len(embedding) != self.dimensions:
-                print(f'Expected embedding dimension {self.dimensions}, but got {len(embedding)}')
-                return []
-            return embedding
-        except Exception as e:
-            print(e)
-            return []
+    def __call__(self, text: str, *args, **kwargs) -> List[float]:
+        kwargs = {'options': self.options} if self.options else {}
+        response = self.ollama_client.embed(input=text, model=self.model, **kwargs)
+        embedding = []
+        if response and 'embeddings' in response:
+            embeddings = response['embeddings']
+            if isinstance(embeddings, list) and len(embeddings) > 0 and isinstance(embeddings[0], list):
+                embedding = embeddings[0]
+            elif isinstance(embeddings, list) and all(isinstance(x, (int, float)) for x in embeddings):
+                embedding = embeddings
+        return embedding
 
 
 class Document:
-    def __init__(self, content: str, id: str = None, name: str = None, meta_data: Dict[str, Any] = None,
-                 usage: Dict[str, Any] = None, reranking_score: float = None):
-        self.content = content
+    def __init__(self, content: str, id='', name='', meta_data: dict = None):
         self.id = id
         self.name = name
+        self.content = content
         self.meta_data = meta_data or {}
-        self.usage = usage
-        self.reranking_score = reranking_score
 
     def embed(self, embedder: Embedder) -> List[float]:
-        return embedder.get_embedding(self.content)
+        return embedder(self.content)
 
     def to_dict(self) -> Dict[str, Any]:
-        fields = {'name', 'meta_data', 'content'}
-        return {field: getattr(self, field)
-                for field in fields
-                if getattr(self, field) is not None or field == 'content'}
-
-    @classmethod
-    def from_dict(cls, document: Dict[str, Any]) -> 'Document':
-        return cls(**document)
-
-    @classmethod
-    def from_json(cls, document: str) -> 'Document':
-        return cls(**json.loads(document))
+        return {'name': self.name, 'meta_data': self.meta_data, 'content': self.content}
 
 
 class Reader:
-    def __init__(self, chunk_size: int = 5000, overlap=0, separators: List[str] = None):
+    def __init__(self, chunk_size=5000, overlap=0, separators: List[str] = None):
         if overlap >= chunk_size:
             chunk_size, overlap = overlap, chunk_size
         self.overlap = overlap
@@ -145,6 +117,21 @@ class Reader:
             start = new_start
         return chunks
 
+    def read(self, urls: list) -> Iterator[List[Document]]:
+        for u in urls:
+            if u.endswith('.csv'):
+                yield self.read_csv(u)
+            elif u.endswith(('.doc', '.docx')):
+                yield self.read_docx(u)
+            elif u.endswith('.pdf'):
+                yield self.read_pdf(u)
+            elif u.endswith(('.txt', '.md', '.py', '.js', '.vue')):
+                yield self.read_text(u)
+            elif u.endswith(('.html', '.xml')):
+                yield self.read_url(u)
+            elif u.startswith('http'):
+                yield self.read_website(u, max_depth=3, max_links=10)
+
     def read_csv(self, url: str) -> List[Document]:
         if url.startswith('http'):
             response = requests.get(url)
@@ -171,7 +158,7 @@ class Reader:
         doc_name = url.split('/')[-1].split('.')[0].replace(' ', '_')
         if url.startswith('http'):
             response = requests.get(url)
-            doc_reader = DocumentReader(BytesIO(response.content))
+            doc_reader = DocumentReader(io.BytesIO(response.content))
         else:
             doc_reader = DocumentReader(url)
         documents = []
@@ -240,68 +227,25 @@ class Reader:
         return [i for document in documents for i in self.chunk_document(document)] if self.chunk_size > 0 else documents
 
 
-class ChromaDb:
-    def __init__(self, collection: str, embedder: Optional[Embedder] = None, path: str = 'chromadb', persistent_client: bool = False, reranker=None, **kwargs):
-        self.collection_name: str = collection
-        self.embedder: Embedder = embedder or Embedder()
-        self._client: Optional[ClientAPI] = None
-        self._collection: Optional[Collection] = None
-        self.persistent_client: bool = persistent_client
-        self.path: str = path
-        self.reranker = reranker
-        self.kwargs = kwargs
+class Knowledge:
+    """ 知识库 支持文档 csv,doc,docx,pdf,txt,html,website"""
+    def __init__(self, database='local', path: str = 'static/chromadb', **kwargs):
+        self.dbname: str = database
+        self.embedder = Embedder()
+        self.client = chromadb.PersistentClient(path=path, **kwargs)
+        self.collection = self.client.get_or_create_collection(self.dbname,  metadata={'hnsw:space': 'cosine'}, embedding_function=self.embedder)
 
-    @property
-    def client(self) -> ClientAPI:
-        if self._client is None:
-            if not self.persistent_client:
-                print('Creating Chroma Client')
-                self._client = ChromaDbClient(**self.kwargs)
-            elif self.persistent_client:
-                print('Creating Persistent Chroma Client')
-                self._client = PersistentChromaDbClient(path=self.path, **self.kwargs)
-        return self._client
+    def exists(self, doc: Union[str, Document]) -> bool:
+        if isinstance(doc, Document):
+            return doc.content.replace('\x00', '\ufffd') in self.collection.get().get('documents', [])
+        return bool(self.collection.get(where={"url": doc})['ids'])
 
-    def create(self) -> None:
-        if self.exists():
-            print(f'Collection already exists: {self.collection_name}')
-            self._collection = self.client.get_collection(name=self.collection_name)
-        else:
-            print(f'Creating collection: {self.collection_name}')
-            self._collection = self.client.create_collection(name=self.collection_name, metadata={'hnsw:space': 'cosine'})
-
-    def doc_exists(self, document: Document) -> bool:
-        if not self.client:
-            print('Client not initialized')
-            return False
-        try:
-            collection: Collection = self.client.get_collection(name=self.collection_name)
-            collection_data: GetResult = collection.get(include=[IncludeEnum.documents])
-            existing_documents = collection_data.get('documents', [])
-            cleaned_content = document.content.replace('\x00', '\ufffd')
-            if cleaned_content in existing_documents:
-                return True
-        except Exception as e:
-            print(f'Document does not exist: {e}')
-        return False
-
-    def name_exists(self, name: str) -> bool:
-        if self.client:
-            try:
-                collections: Collection = self.client.get_collection(name=self.collection_name)
-                return bool(collections.get(where={"url": name})['ids'])
-            except Exception as e:
-                print(f'Document with given name does not exist: {e}')
-        return False
-
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, documents: List[Document]):
         print(f'插入 {len(documents)} 个文档')
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
         docs_metadata: List = []
-        if not self._collection:
-            self._collection = self.client.get_collection(name=self.collection_name)
         for document in documents:
             cleaned_content = document.content.replace('\x00', '\ufffd')
             doc_id = md5(cleaned_content.encode()).hexdigest()
@@ -309,49 +253,29 @@ class ChromaDb:
             docs.append(cleaned_content)
             ids.append(doc_id)
             docs_metadata.append(document.meta_data)
-            print(f'Inserted document: {document.id} | {document.name} | {document.meta_data}')
-        if self._collection is None:
-            print('Collection does not exist')
-        else:
-            if len(docs) > 0:
-                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
-                print(f'Committed {len(docs)} documents')
+            print(f'插入文档: {document.id} | {document.name} | {document.meta_data}')
+        if len(docs) > 0:
+            self.collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
 
-    def upsert_available(self) -> bool:
-        return True
-
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        print(f'Upserting {len(documents)} documents')
+    def upsert(self, documents: List[Document]):
+        print(f'更新插入 {len(documents)} 个文档')
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
         docs_metadata: List = []
-        if not self._collection:
-            self._collection = self.client.get_collection(name=self.collection_name)
         for document in documents:
-            document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace('\x00', '\ufffd')
             doc_id = md5(cleaned_content.encode()).hexdigest()
-            docs_embeddings.append(document.embedding)
+            docs_embeddings.append(document.embed(embedder=self.embedder))
             docs.append(cleaned_content)
             ids.append(doc_id)
             docs_metadata.append(document.meta_data)
-            print(f'Upserted document: {document.id} | {document.name} | {document.meta_data}')
-        if self._collection is None:
-            print('Collection does not exist')
-        else:
-            if len(docs) > 0:
-                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
-                print(f'Committed {len(docs)} documents')
+            print(f'更新插入: {document.id} | {document.name} | {document.meta_data}')
+        if len(docs) > 0:
+            self.collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
-        query_embedding = self.embedder.get_embedding(query)
-        if query_embedding is None:
-            print(f'Error getting embedding for Query: {query}')
-            return []
-        if not self._collection:
-            self._collection = self.client.get_collection(name=self.collection_name)
-        result: QueryResult = self._collection.query(query_embeddings=query_embedding, n_results=limit, include=['metadatas', 'documents', 'embeddings', 'distances', 'uris'])
+    def search(self, query: str, limit: int = 5) -> List[Document]:
+        result = self.collection.query(query_embeddings=self.embedder(query), n_results=limit, include=['metadatas', 'documents', 'embeddings', 'distances', 'uris'])
         search_results: List[Document] = []
         ids = result.get('ids', [[]])[0]
         metadata = result.get('metadatas', [{}])[0]
@@ -361,247 +285,23 @@ class ChromaDb:
         distances = result.get('distances', [[]])[0]
         for idx, distance in enumerate(distances):
             metadata[idx]['distances'] = distance
-        try:
-            for idx, (id_, metadata, document) in enumerate(zip(ids, metadata, documents)):
-                search_results.append(Document(id=id_, meta_data=metadata, content=document, embedding=embeddings[idx]))
-        except Exception as e:
-            print(f'Error building search results: {e}')
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
+        for idx, (id_, metadata, document) in enumerate(zip(ids, metadata, documents)):
+            search_results.append(Document(id=id_, meta_data=metadata, content=document, embedding=embeddings[idx]))
         return search_results
 
-    def drop(self) -> None:
-        if self.exists():
-            print(f'Deleting collection: {self.collection_name}')
-            self.client.delete_collection(name=self.collection_name)
+    def delete(self):
+        self.client.delete_collection(name=self.dbname)
 
-    def exists(self) -> bool:
-        try:
-            self.client.get_collection(name=self.collection_name)
-            return True
-        except Exception as e:
-            print(f'Collection does not exist: {e}')
-        return False
-
-    def get_count(self) -> int:
-        if self.exists():
-            try:
-                collection: Collection = self.client.get_collection(name=self.collection_name)
-                return collection.count()
-            except Exception as e:
-                print(f'Error getting count: {e}')
-        return 0
-
-    def optimize(self) -> None:
-        raise NotImplementedError
-
-    def delete(self) -> bool:
-        try:
-            self.client.delete_collection(name=self.collection_name)
-            return True
-        except Exception as e:
-            print(f'Error clearing collection: {e}')
-            return False
-
-
-class Knowledge:
-    """ 知识库 支持文档 csv,doc,docx,pdf,txt,html,website"""
-    def __init__(self, urls: List[str], database: str = 'local', num_documents=5, optimize_on=1000, docs: List[Document] = None):
-        self.vector_db = ChromaDb(database)
-        self.urls = [url for url in urls if url and not self.vector_db.name_exists(name=url)]
-        self.docs = docs
-        self.num_documents = num_documents
-        self.optimize_on = optimize_on
-
-    @property
-    def document_lists(self) -> Iterator[List[Document]]:
-        reader = Reader()
-        for u in self.urls:
-            if u.endswith('.csv'):
-                yield reader.read_csv(u)
-            elif u.endswith(('.doc', '.docx')):
-                yield reader.read_docx(u)
-            elif u.endswith('.pdf'):
-                yield reader.read_pdf(u)
-            elif u.endswith(('.txt', '.md', '.py', '.js', '.vue')):
-                yield reader.read_text(u)
-            elif u.endswith(('.html', '.xml')):
-                yield reader.read_url(u)
-            elif u.startswith('http'):
-                yield reader.read_website(u, max_depth=3, max_links=10)
-
-    def search(self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
-        try:
-            if self.vector_db is None:
-                print('未提供矢量数据库')
-                return []
-            _num_documents = num_documents or self.num_documents
-            print(f'Getting {_num_documents} relevant documents for query: {query}')
-            return self.vector_db.search(query=query, limit=_num_documents, filters=filters)
-        except Exception as e:
-            print(f'搜索文档时出错: {e}')
-            return []
-
-    async def async_search(self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
-        try:
-            if self.vector_db is None:
-                print('未提供矢量数据库')
-                return []
-            _num_documents = num_documents or self.num_documents
-            print(f'Getting {_num_documents} relevant documents for query: {query}')
-            try:
-                return self.vector_db.search(query=query, limit=_num_documents, filters=filters)
-            except NotImplementedError:
-                print('Vector db does not support async search')
-                return self.search(query=query, num_documents=_num_documents, filters=filters)
-        except Exception as e:
-            print(f'搜索文档时出错: {e}')
-            return []
-
-    def load(self, recreate: bool = False, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
-        if self.vector_db is None:
-            print('No vector db provided')
-            return
+    def load(self, docs: List[Union[Document, str]] = None, recreate=False, upsert=False, skip_existing=True):
         if recreate:
-            print('Dropping collection')
-            self.vector_db.drop()
-        if not self.vector_db.exists():
-            print('Creating collection')
-            self.vector_db.create()
-        print('Loading knowledge base')
-        num_documents = 0
-        for document_list in self.document_lists:
-            documents_to_load = document_list
-            if upsert and self.vector_db.upsert_available():
-                self.vector_db.upsert(documents=documents_to_load, filters=filters)
+            self.delete()
+        urls = [u for u in docs if isinstance(u, str) and not self.exists(u)]
+        docs = [d for d in docs if isinstance(d, Document)] + list(Reader().read(urls))
+        for documents in docs:
+            if upsert:
+                self.upsert(documents)
             else:
-                if skip_existing:
-                    seen_content = set()
-                    documents_to_load = []
-                    for doc in document_list:
-                        if doc.content not in seen_content and not self.vector_db.doc_exists(doc):
-                            seen_content.add(doc.content)
-                            documents_to_load.append(doc)
-                self.vector_db.insert(documents=documents_to_load, filters=filters)
-            num_documents += len(documents_to_load)
-            print(f'Added {len(documents_to_load)} documents to knowledge base')
-
-    async def aload(self, recreate: bool = False, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
-        if self.vector_db is None:
-            print('No vector db provided')
-            return
-        if recreate:
-            print('Dropping collection')
-            self.vector_db.drop()
-        if not self.vector_db.exists():
-            print('Creating collection')
-            self.vector_db.create()
-        print('Loading knowledge base')
-        num_documents = 0
-        for document_list in self.document_lists:
-            documents_to_load = document_list
-            if upsert and self.vector_db.upsert_available():
-                self.vector_db.upsert(documents=documents_to_load, filters=filters)
-            else:
-                if skip_existing:
-                    seen_content = set()
-                    documents_to_load = []
-                    for doc in document_list:
-                        if doc.content not in seen_content and not (self.vector_db.doc_exists(doc)):
-                            seen_content.add(doc.content)
-                            documents_to_load.append(doc)
-                self.vector_db.insert(documents=documents_to_load, filters=filters)
-            num_documents += len(documents_to_load)
-            print(f'Added {len(documents_to_load)} documents to knowledge base')
-
-    def load_documents(self, documents: List[Document], upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
-        print('Loading knowledge base')
-        if self.vector_db is None:
-            print('No vector db provided')
-            return
-        print('Creating collection')
-        self.vector_db.create()
-        if upsert and self.vector_db.upsert_available():
-            self.vector_db.upsert(documents=documents, filters=filters)
-            print(f'Loaded {len(documents)} documents to knowledge base')
-        else:
-            documents_to_load = ([document for document in documents if not self.vector_db.doc_exists(document)]
-                if skip_existing
-                else documents)
-            if len(documents_to_load) > 0:
-                self.vector_db.insert(documents=documents_to_load, filters=filters)
-                print(f'Loaded {len(documents_to_load)} documents to knowledge base')
-            else:
-                print('No new documents to load')
-
-    async def async_load_documents(self, documents: List[Document], upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
-        print('Loading knowledge base')
-        if self.vector_db is None:
-            print('No vector db provided')
-            return
-        print('Creating collection')
-        try:
-            self.vector_db.create()
-        except NotImplementedError:
-            print('Vector db does not support async create')
-            self.vector_db.create()
-        if upsert and self.vector_db.upsert_available():
-            try:
-                self.vector_db.upsert(documents=documents, filters=filters)
-            except NotImplementedError:
-                print('Vector db does not support async upsert')
-                self.vector_db.upsert(documents=documents, filters=filters)
-            print(f'Loaded {len(documents)} documents to knowledge base')
-        else:
-            if skip_existing:
-                try:
-                    existence_checks = [self.vector_db.doc_exists(document) for document in documents]
-                    documents_to_load = [
-                        doc
-                        for doc, exists in zip(documents, existence_checks)
-                        if not (isinstance(exists, bool) and exists)
-                    ]
-                except NotImplementedError:
-                    print('Vector db does not support async doc_exists')
-                    documents_to_load = [document for document in documents if not self.vector_db.doc_exists(document)]
-            else:
-                documents_to_load = documents
-            if len(documents_to_load) > 0:
-                try:
-                    self.vector_db.insert(documents=documents_to_load, filters=filters)
-                except NotImplementedError:
-                    print('Vector db does not support async insert')
-                    self.vector_db.insert(documents=documents_to_load, filters=filters)
-                print(f'Loaded {len(documents_to_load)} documents to knowledge base')
-            else:
-                print('No new documents to load')
-
-    def load_document(self, document: Document, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
-        self.load_documents(documents=[document], upsert=upsert, skip_existing=skip_existing, filters=filters)
-
-    async def async_load_document(self, document: Document, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
-        await self.async_load_documents(documents=[document], upsert=upsert, skip_existing=skip_existing, filters=filters)
-
-    def load_dict(self, document: Dict[str, Any], upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
-        self.load_documents(documents=[Document.from_dict(document)], upsert=upsert, skip_existing=skip_existing, filters=filters)
-
-    def load_json(self, document: str, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
-        self.load_documents(documents=[Document.from_json(document)], upsert=upsert, skip_existing=skip_existing, filters=filters)
-
-    def load_text(self, text: str, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None) -> None:
-        self.load_documents(documents=[Document(content=text)], upsert=upsert, skip_existing=skip_existing, filters=filters)
-
-    def exists(self) -> bool:
-        if self.vector_db is None:
-            print('No vector db provided')
-            return False
-        return self.vector_db.exists()
-
-    def delete(self) -> bool:
-        if self.vector_db is None:
-            print('No vector db available')
-            return True
-        return self.vector_db.delete()
+                self.insert([doc for doc in documents if not self.exists(doc)] if skip_existing else documents)
 
 
 class SessionMetrics:
@@ -633,7 +333,7 @@ class SessionMetrics:
         if self.timer is not None:
             self.time_to_first_token = self.timer.elapsed
 
-    def __add__(self, other: Union['SessionMetrics', 'MessageMetrics']) -> 'SessionMetrics':
+    def __add__(self, other):
         result = SessionMetrics(input_tokens=self.input_tokens + other.input_tokens, output_tokens=self.output_tokens + other.output_tokens, total_tokens=self.total_tokens + other.total_tokens, prompt_tokens=self.prompt_tokens + other.prompt_tokens, completion_tokens=self.completion_tokens + other.completion_tokens)
         if self.prompt_tokens_details or other.prompt_tokens_details:
             result.prompt_tokens_details = {}
@@ -664,7 +364,7 @@ class SessionMetrics:
         result.time_to_first_token = self.time_to_first_token or other.time_to_first_token
         return result
 
-    def __radd__(self, other: Union['SessionMetrics', 'MessageMetrics']) -> 'SessionMetrics':
+    def __radd__(self, other):
         if other == 0:
             return self
         return self + other
@@ -2144,7 +1844,7 @@ class Agent:
                 return None
         if self.knowledge is None or self.knowledge.vector_db is None:
             return None
-        relevant_docs: List[Document] = await self.knowledge.async_search(query=query, num_documents=num_documents, **kwargs)
+        relevant_docs: List[Document] = self.knowledge.search(query=query, num_documents=num_documents, **kwargs)
         if len(relevant_docs) == 0:
             return None
         return [doc.to_dict() for doc in relevant_docs]
@@ -2488,7 +2188,7 @@ class Agent:
             document_name = query.replace(' ', '_').replace('?', '').replace('!', '').replace('.', '')
         document_content = json.dumps({'query': query, 'result': result})
         print(f'将文档添加到知识库: {document_name}: {document_content}')
-        self.knowledge.load_document(document=Document(name=document_name, content=document_content))
+        self.knowledge.load([Document(name=document_name, content=document_content)])
         return '已成功添加到知识库'
 
     def update_memory(self, task: str) -> str:
