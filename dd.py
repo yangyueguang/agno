@@ -1,11 +1,9 @@
 import json
 from textwrap import dedent
 from typing import Dict, Iterator, Optional, Union, Any, Optional, Iterable
-from agno.storage import SqliteStorage
-from agno.agent import Agent, RunEvent, RunResponse, Workflow, Knowledge
+from agno.agent import Agent, Team, RunResponse, Workflow, Knowledge
 from pydantic import BaseModel, Field
 from agno.models import Ollama, Toolkit
-from agno.team import Team
 from agno.memory import RunResponse
 from duckduckgo_search import DDGS
 import yfinance as yf
@@ -152,14 +150,14 @@ agent = Agent(model=Ollama(), description='你是泰国菜专家！', instructio
         '在你的知识库中搜索泰国食谱。如果这个问题更适合网络，请搜索网络以填补空白。更喜欢你知识库中的信息，而不是网络结果。'
     ], knowledge=Knowledge(), tools=[lambda x: 'hello'], show_tool_calls=True, markdown=True)
 agent.knowledge.load(['https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf'])
-agent.print_response('如何在椰奶汤中烹制鸡肉和galangal', stream=True)
-agent.print_response('泰国咖喱的历史是什么?', stream=True)
+agent.print_response('如何在椰奶汤中烹制鸡肉和galangal')
+agent.print_response('泰国咖喱的历史是什么?')
 
 
 web_agent = Agent(name='Web Agent', role='在网上搜索信息', model=Ollama(), tools=[], instructions='始终包含来源', show_tool_calls=True, markdown=True)
 finance_agent = Agent(name='Finance Agent', role='获取财务数据', model=Ollama(), tools=[], instructions='使用表格显示数据', show_tool_calls=True, markdown=True)
 agent_team = Team(mode='coordinate', members=[web_agent, finance_agent], model=Ollama(), success_criteria='一份全面的财经新闻报道，有清晰的章节和数据驱动的见解。', instructions=['始终包含来源', '使用表格显示数据'], show_tool_calls=True, markdown=True)
-agent_team.print_response("AI半导体公司的市场前景和财务业绩如何?", stream=True)
+agent_team.print_response("AI半导体公司的市场前景和财务业绩如何?")
 
 class Article(BaseModel):
     title: str = Field(..., description='Title of the article.')
@@ -269,13 +267,11 @@ X-2000教授撰写的报告
         print(f'Saving scraped articles for topic: {topic}')
         self.session_state.setdefault('scraped_articles', {})
         self.session_state['scraped_articles'][topic] = scraped_articles
-        self.write_to_storage()
         writer_input = {'topic': topic, 'articles': [v.model_dump() for v in scraped_articles.values()]}
         yield from self.writer.run(json.dumps(writer_input, indent=4), stream=True)
         print(f'Saving report for topic: {topic}')
         self.session_state.setdefault('reports', {})
         self.session_state['reports'][topic] = self.writer.run_response.content
-        self.write_to_storage()
 
     def get_search_results(self, topic: str, num_attempts: int = 3) -> Optional[SearchResults]:
         for attempt in range(num_attempts):
@@ -287,7 +283,6 @@ X-2000教授撰写的报告
                     print(f'Saving search results for topic: {topic}')
                     self.session_state.setdefault('search_results', {})
                     self.session_state['search_results'][topic] = searcher_response.content.model_dump()
-                    self.write_to_storage()
                     return searcher_response.content
                 else:
                     print(f'Attempt {attempt + 1}/{num_attempts} failed: Invalid response type')
@@ -302,7 +297,7 @@ if __name__ == '__main__':
     topics_str = '\n'.join(f'{i + 1}. {topic}' for i, topic in enumerate(example_topics))
     print(f'\n📚 Example Research Topics:\n{topics_str}\n')
     topic = example_topics[1]
-    generate_research_report = ResearchReportGenerator(session_id=f'生成报告-{topic}', storage=SqliteStorage(table_name='generate_research_report_workflow', db_file='workflows.db'))
+    generate_research_report = ResearchReportGenerator(session_id=f'生成报告-{topic}')
     report_stream: Iterator[RunResponse] = generate_research_report.run(topic=topic)
     for i in report_stream:
         print(i.content)
