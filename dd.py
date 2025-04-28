@@ -150,8 +150,8 @@ print(response.content)
 
 agent = Agent(model=Ollama(), description='你是泰国菜专家！', instructions=[
         '在你的知识库中搜索泰国食谱。如果这个问题更适合网络，请搜索网络以填补空白。更喜欢你知识库中的信息，而不是网络结果。'
-    ], knowledge=Knowledge(urls=['https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf']), tools=[lambda x: 'hello'], show_tool_calls=True, markdown=True)
-agent.knowledge.load()
+    ], knowledge=Knowledge(), tools=[lambda x: 'hello'], show_tool_calls=True, markdown=True)
+agent.knowledge.load(['https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf'])
 agent.print_response('如何在椰奶汤中烹制鸡肉和galangal', stream=True)
 agent.print_response('泰国咖喱的历史是什么?', stream=True)
 

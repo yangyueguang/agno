@@ -51,9 +51,9 @@ class Embedder:
         client_kwargs['timeout'] = timeout
         self.ollama_client = OllamaClient(**{k: v for k, v in client_kwargs.items() if v})
 
-    def __call__(self, text: str, *args, **kwargs) -> List[float]:
+    def __call__(self, input: str) -> List[float]:
         kwargs = {'options': self.options} if self.options else {}
-        response = self.ollama_client.embed(input=text, model=self.model, **kwargs)
+        response = self.ollama_client.embed(input=input, model=self.model, **kwargs)
         embedding = []
         if response and 'embeddings' in response:
             embeddings = response['embeddings']
