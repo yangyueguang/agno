@@ -39,7 +39,6 @@ from sqlalchemy.inspection import inspect as sqlinspect
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.schema import Column, MetaData, Table
 from sqlalchemy.sql.expression import select, text
-from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup, Tag
 from pypdf import PdfReader as DocumentReader
@@ -330,92 +329,23 @@ class Knowledge:
                 self.insert([doc for doc in documents if not self.exists(doc)] if skip_existing else documents)
 
 
-@dataclass
 class AgentSession:
-    session_id: str
-    user_id: Optional[str] = None
-    team_session_id: Optional[str] = None
-    memory: Optional[Dict[str, Any]] = None
-    session_data: Optional[Dict[str, Any]] = None
-    extra_data: Optional[Dict[str, Any]] = None
-    created_at: Optional[int] = None
-    updated_at: Optional[int] = None
-    agent_id: Optional[str] = None
-    agent_data: Optional[Dict[str, Any]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        return self.__dict__
-
-    def telemetry_data(self) -> Dict[str, Any]:
-        return {'model': self.agent_data.get('model') if self.agent_data else None, 'created_at': self.created_at, 'updated_at': self.updated_at}
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]):
-        if data is None or data.get('session_id') is None:
-            print('AgentSession is missing session_id')
-            return None
-        return cls(session_id=data.get('session_id'), agent_id=data.get('agent_id'), team_session_id=data.get('team_session_id'), user_id=data.get('user_id'), memory=data.get('memory'), agent_data=data.get('agent_data'), session_data=data.get('session_data'), extra_data=data.get('extra_data'), created_at=data.get('created_at'), updated_at=data.get('updated_at'))
-
-
-@dataclass
-class TeamSession:
-    session_id: str
-    team_session_id: Optional[str] = None
-    team_id: Optional[str] = None
-    user_id: Optional[str] = None
-    memory: Optional[Dict[str, Any]] = None
-    team_data: Optional[Dict[str, Any]] = None
-    session_data: Optional[Dict[str, Any]] = None
-    extra_data: Optional[Dict[str, Any]] = None
-    created_at: Optional[int] = None
-    updated_at: Optional[int] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        return self.__dict__
-
-    def telemetry_data(self) -> Dict[str, Any]:
-        return {'model': self.team_data.get('model') if self.team_data else None, 'created_at': self.created_at, 'updated_at': self.updated_at}
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]):
-        if data is None or data.get('session_id') is None:
-            print('AgentSession is missing session_id')
-            return None
-        return cls(session_id=data.get('session_id'), team_id=data.get('team_id'), team_session_id=data.get('team_session_id'), user_id=data.get('user_id'), memory=data.get('memory'), team_data=data.get('team_data'), session_data=data.get('session_data'), extra_data=data.get('extra_data'), created_at=data.get('created_at'), updated_at=data.get('updated_at'))
-
-
-@dataclass
-class WorkflowSession:
-    session_id: str
-    user_id: Optional[str] = None
-    memory: Optional[Dict[str, Any]] = None
-    session_data: Optional[Dict[str, Any]] = None
-    extra_data: Optional[Dict[str, Any]] = None
-    created_at: Optional[int] = None
-    updated_at: Optional[int] = None
-    workflow_id: Optional[str] = None
-    workflow_data: Optional[Dict[str, Any]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        return self.__dict__
-
-    def monitoring_data(self) -> Dict[str, Any]:
-        return self.to_dict()
-
-    def telemetry_data(self) -> Dict[str, Any]:
-        return {'created_at': self.created_at, 'updated_at': self.updated_at}
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]):
-        if data is None or data.get('session_id') is None:
-            print('WorkflowSession is missing session_id')
-            return None
-        return cls(session_id=data.get('session_id'), workflow_id=data.get('workflow_id'), user_id=data.get('user_id'), memory=data.get('memory'), workflow_data=data.get('workflow_data'), session_data=data.get('session_data'), extra_data=data.get('extra_data'), created_at=data.get('created_at'), updated_at=data.get('updated_at'))
+    def __init__(self, session_id: str, mode: Literal['agent', 'team', 'workflow'] = 'agent',  user_id: Optional[str] = None, team_session_id: Optional[str] = None, memory: Optional[Dict[str, Any]] = None, session_data: Optional[Dict[str, Any]] = None, extra_data: Optional[Dict[str, Any]] = None, created_at: Optional[int] = None, updated_at: Optional[int] = None, agent_id: Optional[str] = None, agent_data: Optional[Dict[str, Any]] = None):
+        self.mode = mode
+        self.session_id = session_id
+        self.user_id = user_id
+        self.team_session_id = team_session_id
+        self.memory = memory
+        self.session_data = session_data
+        self.extra_data = extra_data
+        self.created_at = created_at
+        self.updated_at = updated_at
+        self.agent_id = agent_id
+        self.agent_data = agent_data
 
 
 class Storage:
-    def __init__(self, table_name: str, schema: Optional[str] = 'ai', db_url: Optional[str] = None, db_engine: Optional[Engine] = None, schema_version: int = 1, auto_upgrade_schema: bool = False, mode: Optional[Literal['agent', 'team', 'workflow']] = 'agent'):
-        self._mode = mode
+    def __init__(self, table_name: str, schema='ai', db_url: str = None, db_engine: Engine = None, auto_upgrade_schema=False):
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
             _engine = create_engine(db_url, connect_args={'charset': 'utf8mb4'})
@@ -426,51 +356,27 @@ class Storage:
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = _engine
         self.metadata: MetaData = MetaData(schema=self.schema)
-        self.schema_version: int = schema_version
         self.auto_upgrade_schema: bool = auto_upgrade_schema
         self._schema_up_to_date: bool = False
         self.Session: sessionmaker[Session] = sessionmaker(bind=self.db_engine)
         self.table: Table = self.get_table()
 
-    @property
-    def mode(self) -> Literal['agent', 'team', 'workflow']:
-        return self._mode
-
-    @mode.setter
-    def mode(self, value: Optional[Literal['agent', 'team', 'workflow']]) -> None:
-        self._mode = 'agent' if value is None else value
-        if value is not None:
-            self.table = self.get_table()
-
-    def get_table_v1(self) -> Table:
+    def get_table(self) -> Table:
         common_columns = [
-            Column('session_id', mysql.TEXT, primary_key=True), Column('user_id', mysql.TEXT), Column('memory', mysql.JSON), Column('session_data', mysql.JSON), Column('extra_data', mysql.JSON), Column('created_at', mysql.BIGINT), Column('updated_at', mysql.BIGINT), ]
-        specific_columns = []
-        if self.mode == 'agent':
-            specific_columns = [
-                Column('agent_id', mysql.TEXT), Column('team_session_id', mysql.TEXT, nullable=True), Column('agent_data', mysql.JSON), ]
-        elif self.mode == 'team':
-            specific_columns = [
-                Column('team_id', mysql.TEXT), Column('team_session_id', mysql.TEXT, nullable=True), Column('team_data', mysql.JSON), ]
-        elif self.mode == 'workflow':
-            specific_columns = [
-                Column('workflow_id', mysql.TEXT), Column('workflow_data', mysql.JSON), ]
-        table = Table(self.table_name, self.metadata, *common_columns, *specific_columns, extend_existing=True, schema=self.schema)
+            Column('session_id', mysql.TEXT, primary_key=True), Column('user_id', mysql.TEXT),
+            Column('memory', mysql.JSON), Column('session_data', mysql.JSON), Column('extra_data', mysql.JSON),
+            Column('created_at', mysql.BIGINT), Column('updated_at', mysql.BIGINT), ]
+        specific_columns = [Column('agent_id', mysql.TEXT), Column('team_session_id', mysql.TEXT, nullable=True),
+                            Column('agent_data', mysql.JSON), ]
+        table = Table(self.table_name, self.metadata, *common_columns, *specific_columns, extend_existing=True,
+                      schema=self.schema)
         return table
 
-    def get_table(self) -> Table:
-        if self.schema_version == 1:
-            return self.get_table_v1()
-        else:
-            raise ValueError(f'Unsupported schema version: {self.schema_version}')
-
     def table_exists(self) -> bool:
-        print(f'Checking if table exists: {self.table.name}')
         try:
             return sqlinspect(self.db_engine).has_table(self.table.name, schema=self.schema)
         except Exception as e:
             print(e)
-            return False
 
     def create(self) -> None:
         self.table = self.get_table()
@@ -478,86 +384,32 @@ class Storage:
             print(f'Creating table: {self.table_name}\n')
             self.table.create(self.db_engine)
 
-    def _read(self, session: Session, session_id: str, user_id: Optional[str] = None) -> Optional[Row[Any]]:
-        stmt = select(self.table).where(self.table.c.session_id == session_id)
-        if user_id is not None:
-            stmt = stmt.where(self.table.c.user_id == user_id)
-        try:
-            return session.execute(stmt).first()
-        except Exception as e:
-            print(f'Exception reading from table: {e}')
-            print(f'Table does not exist: {self.table.name}')
-            print(f'Creating table: {self.table_name}')
-            self.create()
-        return None
-
-    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
+    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
         with self.Session.begin() as sess:
-            existing_row: Optional[Row[Any]] = self._read(session=sess, session_id=session_id, user_id=user_id)
-            if existing_row is not None:
-                if self.mode == 'agent':
-                    return AgentSession.from_dict(existing_row._mapping)
-                elif self.mode == 'team':
-                    return TeamSession.from_dict(existing_row._mapping)
-                elif self.mode == 'workflow':
-                    return WorkflowSession.from_dict(existing_row._mapping)
-            return None
+            stmt = select(self.table).where(self.table.c.session_id == session_id)
+            if user_id is not None:
+                stmt = stmt.where(self.table.c.user_id == user_id)
+            try:
+                existing_row = sess.execute(stmt).first()
+                return AgentSession(**existing_row._mapping)
+            except Exception as e:
+                self.create()
 
-    def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
-        session_ids: List[str] = []
-        try:
-            with self.Session.begin() as sess:
-                stmt = select(self.table)
-                if user_id is not None:
-                    stmt = stmt.where(self.table.c.user_id == user_id)
-                if entity_id is not None:
-                    if self.mode == 'agent':
-                        stmt = stmt.where(self.table.c.agent_id == entity_id)
-                    elif self.mode == 'team':
-                        stmt = stmt.where(self.table.c.team_id == entity_id)
-                    elif self.mode == 'workflow':
-                        stmt = stmt.where(self.table.c.workflow_id == entity_id)
-                stmt = stmt.order_by(self.table.c.created_at.desc())
-                rows = sess.execute(stmt).fetchall()
-                for row in rows:
-                    if row is not None and row.session_id is not None:
-                        session_ids.append(row.session_id)
-        except Exception as e:
-            print(f'An unexpected error occurred: {str(e)}')
-        return session_ids
-
-    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Union[AgentSession, TeamSession, WorkflowSession]]:
+    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[AgentSession]:
         sessions = []
-        try:
-            with self.Session.begin() as sess:
-                stmt = select(self.table)
-                if user_id is not None:
-                    stmt = stmt.where(self.table.c.user_id == user_id)
-                if entity_id is not None:
-                    if self.mode == 'agent':
-                        stmt = stmt.where(self.table.c.agent_id == entity_id)
-                    elif self.mode == 'team':
-                        stmt = stmt.where(self.table.c.team_id == entity_id)
-                    elif self.mode == 'workflow':
-                        stmt = stmt.where(self.table.c.workflow_id == entity_id)
-                stmt = stmt.order_by(self.table.c.created_at.desc())
-                rows = sess.execute(stmt).fetchall()
-                for row in rows:
-                    if row.session_id is not None:
-                        if self.mode == 'agent':
-                            _agent_session = AgentSession.from_dict(row._mapping)
-                            if _agent_session is not None:
-                                sessions.append(_agent_session)
-                        elif self.mode == 'team':
-                            _team_session = TeamSession.from_dict(row._mapping)
-                            if _team_session is not None:
-                                sessions.append(_team_session)
-                        elif self.mode == 'workflow':
-                            _workflow_session = WorkflowSession.from_dict(row._mapping)
-                            if _workflow_session is not None:
-                                sessions.append(_workflow_session)
-        except Exception:
-            print(f'Table does not exist: {self.table.name}')
+        with self.Session.begin() as sess:
+            stmt = select(self.table)
+            if user_id is not None:
+                stmt = stmt.where(self.table.c.user_id == user_id)
+            if entity_id is not None:
+                stmt = stmt.where(self.table.c.agent_id == entity_id)
+            stmt = stmt.order_by(self.table.c.created_at.desc())
+            rows = sess.execute(stmt).fetchall()
+            for row in rows:
+                if row.session_id is not None:
+                    _agent_session = AgentSession(**row._mapping)
+                    if _agent_session is not None:
+                        sessions.append(_agent_session)
         return sessions
 
     def upgrade_schema(self) -> None:
@@ -565,7 +417,7 @@ class Storage:
             print('Auto schema upgrade disabled. Skipping upgrade.')
             return
         try:
-            if self.mode == 'agent' and self.table_exists():
+            if self.table_exists():
                 with self.Session() as sess:
                     column_exists_query = text('''
                         SELECT 1 FROM information_schema.columns
@@ -585,68 +437,28 @@ class Storage:
             print(f'Error during schema upgrade: {e}')
             raise
 
-    def upsert(self, session: Union[AgentSession, TeamSession, WorkflowSession]) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
+    def upsert(self, session: AgentSession) -> Optional[AgentSession]:
         if self.auto_upgrade_schema and not self._schema_up_to_date:
             self.upgrade_schema()
         with self.Session.begin() as sess:
-            if self.mode == 'agent':
-                upsert_sql = text(f'''
-                    INSERT INTO {self.schema}.{self.table_name}
-                    (session_id, agent_id, team_session_id, user_id, memory, agent_data, session_data, extra_data, created_at, updated_at)
-                    VALUES
-                    (:session_id, :agent_id, :team_session_id, :user_id, :memory, :agent_data, :session_data, :extra_data, UNIX_TIMESTAMP(), NULL)
-                    ON DUPLICATE KEY UPDATE
-                        agent_id = VALUES(agent_id), team_session_id = VALUES(team_session_id), user_id = VALUES(user_id), memory = VALUES(memory), agent_data = VALUES(agent_data), session_data = VALUES(session_data), extra_data = VALUES(extra_data), updated_at = UNIX_TIMESTAMP();
-                    ''')
-            elif self.mode == 'team':
-                upsert_sql = text(f'''
-                    INSERT INTO {self.schema}.{self.table_name}
-                    (session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at)
-                    VALUES
-                    (:session_id, :team_id, :user_id, :team_session_id, :memory, :team_data, :session_data, :extra_data, UNIX_TIMESTAMP(), NULL)
-                    ON DUPLICATE KEY UPDATE
-                        team_id = VALUES(team_id), team_session_id = VALUES(team_session_id), user_id = VALUES(user_id), memory = VALUES(memory), team_data = VALUES(team_data), session_data = VALUES(session_data), extra_data = VALUES(extra_data), updated_at = UNIX_TIMESTAMP();
-                    ''')
-            elif self.mode == 'workflow':
-                upsert_sql = text(f'''
-                    INSERT INTO {self.schema}.{self.table_name}
-                    (session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at)
-                    VALUES
-                    (:session_id, :workflow_id, :user_id, :memory, :workflow_data, :session_data, :extra_data, UNIX_TIMESTAMP(), NULL)
-                    ON DUPLICATE KEY UPDATE
-                        workflow_id = VALUES(workflow_id), user_id = VALUES(user_id), memory = VALUES(memory), workflow_data = VALUES(workflow_data), session_data = VALUES(session_data), extra_data = VALUES(extra_data), updated_at = UNIX_TIMESTAMP();
-                    ''')
+            upsert_sql = text(f'''
+                INSERT INTO {self.schema}.{self.table_name}
+                (session_id, agent_id, team_session_id, user_id, memory, agent_data, session_data, extra_data, created_at, updated_at)
+                VALUES
+                (:session_id, :agent_id, :team_session_id, :user_id, :memory, :agent_data, :session_data, :extra_data, UNIX_TIMESTAMP(), NULL)
+                ON DUPLICATE KEY UPDATE
+                    agent_id = VALUES(agent_id), team_session_id = VALUES(team_session_id), user_id = VALUES(user_id), memory = VALUES(memory), agent_data = VALUES(agent_data), session_data = VALUES(session_data), extra_data = VALUES(extra_data), updated_at = UNIX_TIMESTAMP();
+                ''')
             try:
-                if self.mode == 'agent':
-                    sess.execute(upsert_sql, {'session_id': session.session_id, 'agent_id': session.agent_id, 'team_session_id': session.team_session_id, 'user_id': session.user_id, 'memory': json.dumps(session.memory, ensure_ascii=False)
-                            if session.memory is not None
-                            else None, 'agent_data': json.dumps(session.agent_data, ensure_ascii=False)
-                            if session.agent_data is not None
-                            else None, 'session_data': json.dumps(session.session_data, ensure_ascii=False)
-                            if session.session_data is not None
-                            else None, 'extra_data': json.dumps(session.extra_data, ensure_ascii=False)
-                            if session.extra_data is not None
-                            else None})
-                elif self.mode == 'team':
-                    sess.execute(upsert_sql, {'session_id': session.session_id, 'team_id': session.team_id, 'user_id': session.user_id, 'team_session_id': session.team_session_id, 'memory': json.dumps(session.memory, ensure_ascii=False)
-                            if session.memory is not None
-                            else None, 'team_data': json.dumps(session.team_data, ensure_ascii=False)
-                            if session.team_data is not None
-                            else None, 'session_data': json.dumps(session.session_data, ensure_ascii=False)
-                            if session.session_data is not None
-                            else None, 'extra_data': json.dumps(session.extra_data, ensure_ascii=False)
-                            if session.extra_data is not None
-                            else None})
-                elif self.mode == 'workflow':
-                    sess.execute(upsert_sql, {'session_id': session.session_id, 'workflow_id': session.workflow_id, 'user_id': session.user_id, 'memory': json.dumps(session.memory, ensure_ascii=False)
-                            if session.memory is not None
-                            else None, 'workflow_data': json.dumps(session.workflow_data, ensure_ascii=False)
-                            if session.workflow_data is not None
-                            else None, 'session_data': json.dumps(session.session_data, ensure_ascii=False)
-                            if session.session_data is not None
-                            else None, 'extra_data': json.dumps(session.extra_data, ensure_ascii=False)
-                            if session.extra_data is not None
-                            else None})
+                sess.execute(upsert_sql, {'session_id': session.session_id, 'agent_id': session.agent_id, 'team_session_id': session.team_session_id, 'user_id': session.user_id, 'memory': json.dumps(session.memory, ensure_ascii=False)
+                        if session.memory is not None
+                        else None, 'agent_data': json.dumps(session.agent_data, ensure_ascii=False)
+                        if session.agent_data is not None
+                        else None, 'session_data': json.dumps(session.session_data, ensure_ascii=False)
+                        if session.session_data is not None
+                        else None, 'extra_data': json.dumps(session.extra_data, ensure_ascii=False)
+                        if session.extra_data is not None
+                        else None})
             except Exception as e:
                 if not self.table_exists():
                     print(f'Table does not exist: {self.table.name}')
@@ -839,12 +651,6 @@ class Agent:
         if self.debug_mode or os.getenv('AGNO_DEBUG', 'false').lower() == 'true':
             self.debug_mode = True
 
-    def set_storage_mode(self):
-        if self.storage is not None:
-            if self.storage.mode in ['workflow', 'team']:
-                print(f'您不应该以多种模式使用存储。当前模式为 {self.storage.mode}.')
-            self.storage.mode = 'agent'
-
     def set_monitoring(self) -> None:
         monitor_env = os.getenv('AGNO_MONITOR')
         if monitor_env is not None:
@@ -854,7 +660,6 @@ class Agent:
             self.telemetry = telemetry_env.lower() == 'true'
 
     def initialize_agent(self) -> None:
-        self.set_storage_mode()
         self.set_debug()
         self.set_agent_id()
         self.set_session_id()
@@ -2617,7 +2422,7 @@ class Team:
         self.images: Optional[List[ImageArtifact]] = None
         self.audio: Optional[List[AudioArtifact]] = None
         self.videos: Optional[List[VideoArtifact]] = None
-        self.team_session: Optional[TeamSession] = None
+        self.team_session: Optional[AgentSession] = None
         self._tools_for_model: Optional[List[Dict]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None
         self._member_response_model: Optional[Type[BaseModel]] = None
@@ -2663,10 +2468,6 @@ class Team:
         if self.debug_mode or os.getenv('AGNO_DEBUG', 'false').lower() == 'true':
             self.debug_mode = True
 
-    def _set_storage_mode(self):
-        if self.storage is not None:
-            self.storage.mode = 'team'
-
     def _set_monitoring(self) -> None:
         monitor_env = os.getenv('AGNO_MONITOR')
         if monitor_env is not None:
@@ -2688,7 +2489,6 @@ class Team:
             print('Team member name and role is undefined.')
 
     def _initialize_team(self) -> None:
-        self._set_storage_mode()
         self._set_debug()
         self._set_monitoring()
         self._set_team_id()
@@ -4398,17 +4198,17 @@ class Team:
             else:
                 print('Memories loaded')
 
-    def read_from_storage(self) -> Optional[TeamSession]:
+    def read_from_storage(self) -> Optional[AgentSession]:
         if self.storage is not None and self.session_id is not None:
-            self.team_session = cast(TeamSession, self.storage.read(session_id=self.session_id))
+            self.team_session = cast(AgentSession, self.storage.read(session_id=self.session_id))
             if self.team_session is not None:
                 self.load_team_session(session=self.team_session)
             self.load_user_memories()
         return self.team_session
 
-    def write_to_storage(self) -> Optional[TeamSession]:
+    def write_to_storage(self) -> Optional[AgentSession]:
         if self.storage is not None:
-            self.team_session = cast(TeamSession, self.storage.upsert(session=self._get_team_session()))
+            self.team_session = cast(AgentSession, self.storage.upsert(session=self._get_team_session()))
         return self.team_session
 
     def rename_session(self, session_name: str) -> None:
@@ -4421,7 +4221,7 @@ class Team:
         if self.storage is not None:
             self.storage.delete_session(session_id=session_id)
 
-    def load_team_session(self, session: TeamSession):
+    def load_team_session(self, session: AgentSession):
         if self.team_id is None and session.team_id is not None:
             self.team_id = session.team_id
         if self.user_id is None and session.user_id is not None:
@@ -4489,7 +4289,7 @@ class Team:
                         print(f'Failed to load user memories: {e}')
             except Exception as e:
                 print(f'Failed to load AgentMemory: {e}')
-        print(f'-*- TeamSession loaded: {session.session_id}')
+        print(f'-*- AgentSession loaded: {session.session_id}')
 
     def _create_run_data(self) -> Dict[str, Any]:
         run_response_format = 'text'
@@ -4531,9 +4331,9 @@ class Team:
             session_data['audio'] = [aud.model_dump() for aud in self.audio]
         return session_data
 
-    def _get_team_session(self) -> TeamSession:
-        return TeamSession(session_id=self.session_id, team_id=self.team_id, user_id=self.user_id,
-                           team_session_id=self.team_session_id,
+    def _get_team_session(self) -> AgentSession:
+        return AgentSession(mode='team', session_id=self.session_id, agent_id=self.team_id, user_id=self.user_id,
+                           agent_session_id=self.team_session_id,
                            memory=self.memory.to_dict() if self.memory is not None else None,
                            team_data=self._get_team_data(), session_data=self._get_session_data(),
                            extra_data=self.extra_data, created_at=int(time()))
@@ -4543,7 +4343,7 @@ class Team:
             return
         try:
             run_data = self._create_run_data()
-            team_session: TeamSession = self.team_session or self._get_team_session()
+            team_session = self.team_session or self._get_team_session()
         except Exception as e:
             print(f'Could not create team event: {e}')
 
@@ -4552,7 +4352,7 @@ class Team:
             return
         try:
             run_data = self._create_run_data()
-            team_session: TeamSession = self.team_session or self._get_team_session()
+            team_session = self.team_session or self._get_team_session()
         except Exception as e:
             print(f'Could not create team event: {e}')
 
@@ -4560,7 +4360,7 @@ class Team:
         if not (self.telemetry or self.monitoring):
             return
         try:
-            team_session: TeamSession = self.team_session or self._get_team_session()
+            team_session = self.team_session or self._get_team_session()
         except Exception as e:
             print(f'Could not create team monitor: {e}')
 
@@ -4586,7 +4386,7 @@ class Workflow:
         self.images = None
         self.videos = None
         self.audio = None
-        self.workflow_session: Optional[WorkflowSession] = None
+        self.workflow_session: Optional[AgentSession] = None
         self._subclass_run: Optional[Callable] = None
         self._run_parameters: Optional[Dict[str, Any]] = None
         self._run_return_type: Optional[str] = None
@@ -4735,13 +4535,13 @@ class Workflow:
             session_data['audio'] = [aud.model_dump() for aud in self.audio]
         return session_data
 
-    def get_workflow_session(self) -> WorkflowSession:
+    def get_workflow_session(self) -> AgentSession:
         self.memory = cast(WorkflowMemory, self.memory)
         self.session_id = cast(str, self.session_id)
         self.workflow_id = cast(str, self.workflow_id)
-        return WorkflowSession(session_id=self.session_id, workflow_id=self.workflow_id, user_id=self.user_id, memory=self.memory.to_dict() if self.memory is not None else None, workflow_data=self.get_workflow_data(), session_data=self.get_session_data(), extra_data=self.extra_data)
+        return AgentSession(mode='workflow', session_id=self.session_id, workflow_id=self.workflow_id, user_id=self.user_id, memory=self.memory.to_dict() if self.memory is not None else None, workflow_data=self.get_workflow_data(), session_data=self.get_session_data(), extra_data=self.extra_data)
 
-    def load_workflow_session(self, session: WorkflowSession):
+    def load_workflow_session(self, session: AgentSession):
         if self.workflow_id is None and session.workflow_id is not None:
             self.workflow_id = session.workflow_id
         if self.user_id is None and session.user_id is not None:
@@ -4793,7 +4593,7 @@ class Workflow:
                         print(f'Failed to load runs from memory: {e}')
             except Exception as e:
                 print(f'Failed to load WorkflowMemory: {e}')
-        print(f'-*- WorkflowSession loaded: {session.session_id}')
+        print(f'-*- agent session loaded: {session.session_id}')
 
     def load_session(self, force: bool = False) -> Optional[str]:
         if self.workflow_session is not None and not force:
@@ -4807,7 +4607,7 @@ class Workflow:
         self.load_session(force=True)
 
     def log_workflow_session(self):
-        print(f'*********** Logging WorkflowSession: {self.session_id} ***********')
+        print(f'*********** Logging : {self.session_id} ***********')
 
     def rename(self, name: str) -> None:
         self.name = name
