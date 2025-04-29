@@ -81,6 +81,28 @@ class Dot(dict):
         return temp
 
 
+class ResponseEvent(Enum):
+    start = 'start'
+    end = 'end'
+    res = 'res'
+
+
+class RunEvent(Enum):
+    run_started = 'RunStarted'
+    run_response = 'RunResponse'
+    run_completed = 'RunCompleted'
+    run_error = 'RunError'
+    run_cancelled = 'RunCancelled'
+    tool_call_started = 'ToolCallStarted'
+    tool_call_completed = 'ToolCallCompleted'
+    reasoning_started = 'ReasoningStarted'
+    reasoning_step = 'ReasoningStep'
+    reasoning_completed = 'ReasoningCompleted'
+    updating_memory = 'UpdatingMemory'
+    workflow_started = 'WorkflowStarted'
+    workflow_completed = 'WorkflowCompleted'
+
+
 class Timer:
     def __init__(self):
         self.start_time: Optional[float] = None
@@ -391,10 +413,6 @@ class FunctionCall(BaseModel):
                 if 'fc' in inspect.signature(self.function.pre_hook).parameters:
                     pre_hook_args['fc'] = self
                 self.function.pre_hook(**pre_hook_args)
-            except AgentRunException as e:
-                print(f'{e.__class__.__name__}: {e}')
-                self.error = str(e)
-                raise
             except Exception as e:
                 print(f'Error in pre-hook callback: {e}')
                 print(e)
@@ -408,10 +426,6 @@ class FunctionCall(BaseModel):
                 if 'fc' in inspect.signature(self.function.post_hook).parameters:
                     post_hook_args['fc'] = self
                 self.function.post_hook(**post_hook_args)
-            except AgentRunException as e:
-                print(f'{e.__class__.__name__}: {e}')
-                self.error = str(e)
-                raise
             except Exception as e:
                 print(f'Error in post-hook callback: {e}')
                 print(e)
@@ -454,10 +468,6 @@ class FunctionCall(BaseModel):
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
             function_call_success = True
-        except AgentRunException as e:
-            print(f'{e.__class__.__name__}: {e}')
-            self.error = str(e)
-            raise
         except Exception as e:
             print(f'Could not run function {self.get_call_str()}')
             print(e)
@@ -475,10 +485,6 @@ class FunctionCall(BaseModel):
                 if 'fc' in inspect.signature(self.function.pre_hook).parameters:
                     pre_hook_args['fc'] = self
                 await self.function.pre_hook(**pre_hook_args)
-            except AgentRunException as e:
-                print(f'{e.__class__.__name__}: {e}')
-                self.error = str(e)
-                raise
             except Exception as e:
                 print(f'Error in pre-hook callback: {e}')
                 print(e)
@@ -492,10 +498,6 @@ class FunctionCall(BaseModel):
                 if 'fc' in inspect.signature(self.function.post_hook).parameters:
                     post_hook_args['fc'] = self
                 await self.function.post_hook(**post_hook_args)
-            except AgentRunException as e:
-                print(f'{e.__class__.__name__}: {e}')
-                self.error = str(e)
-                raise
             except Exception as e:
                 print(f'Error in post-hook callback: {e}')
                 print(e)
@@ -537,10 +539,6 @@ class FunctionCall(BaseModel):
                 cache_file = self.function._get_cache_file_path(cache_key)
                 self.function._save_to_cache(cache_file, self.result)
             function_call_success = True
-        except AgentRunException as e:
-            print(f'{e.__class__.__name__}: {e}')
-            self.error = str(e)
-            raise
         except Exception as e:
             print(f'Could not run function {self.get_call_str()}')
             print(e)
@@ -979,12 +977,6 @@ class Message(BaseModel):
         return self.content is not None and len(self.content) > 0
 
 
-class ModelResponseEvent(str, Enum):
-    tool_call_started = 'ToolCallStarted'
-    tool_call_completed = 'ToolCallCompleted'
-    assistant_response = 'AssistantResponse'
-
-
 @dataclass
 class ModelResponse:
     role: Optional[str] = None
@@ -993,7 +985,7 @@ class ModelResponse:
     audio: Optional[AudioResponse] = None
     image: Optional[ImageArtifact] = None
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    event: str = ModelResponseEvent.assistant_response.value
+    event: str = ResponseEvent.res.value
     provider_data: Optional[Dict[str, Any]] = None
     thinking: Optional[str] = None
     redacted_thinking: Optional[str] = None
@@ -1002,12 +994,6 @@ class ModelResponse:
     response_usage: Optional[Any] = None
     created_at: int = int(time.time())
     extra: Optional[Dict[str, Any]] = None
-
-
-class FileType(str, Enum):
-    MP4 = 'mp4'
-    GIF = 'gif'
-    MP3 = 'mp3'
 
 
 def get_function_call(name: str, arguments: Optional[str] = None, call_id: Optional[str] = None, functions: Optional[Dict[str, Function]] = None) -> Optional[FunctionCall]:
@@ -1162,9 +1148,9 @@ class Model(ABC):
                 function_calls_to_run = self._prepare_function_calls(assistant_message=assistant_message, messages=messages, model_response=model_response)
                 function_call_results: List[Message] = []
                 for function_call_response in self.run_function_calls(function_calls=function_calls_to_run, function_call_results=function_call_results):
-                    if function_call_response.event == ModelResponseEvent.tool_call_completed.value and function_call_response.tool_calls is not None:
+                    if function_call_response.event == ResponseEvent.end.value and function_call_response.tool_calls is not None:
                         model_response.tool_calls.extend(function_call_response.tool_calls)
-                    elif function_call_response.event not in [ModelResponseEvent.tool_call_started.value, ModelResponseEvent.tool_call_completed.value]:
+                    elif function_call_response.event not in [ResponseEvent.start.value, ResponseEvent.end.value]:
                         if function_call_response.content:
                             model_response.content += function_call_response.content
                 self.format_function_call_results(messages=messages, function_call_results=function_call_results, **model_response.extra or {})
@@ -1187,9 +1173,9 @@ class Model(ABC):
                 function_calls_to_run = self._prepare_function_calls(assistant_message=assistant_message, messages=messages, model_response=model_response)
                 function_call_results: List[Message] = []
                 async for function_call_response in self.arun_function_calls(function_calls=function_calls_to_run, function_call_results=function_call_results):
-                    if function_call_response.event == ModelResponseEvent.tool_call_completed.value and function_call_response.tool_calls is not None:
+                    if function_call_response.event == ResponseEvent.end.value and function_call_response.tool_calls is not None:
                         model_response.tool_calls.extend(function_call_response.tool_calls)
-                    elif function_call_response.event not in [ModelResponseEvent.tool_call_started.value, ModelResponseEvent.tool_call_completed.value]:
+                    elif function_call_response.event not in [ResponseEvent.start.value, ResponseEvent.end.value]:
                         if function_call_response.content:
                             model_response.content += function_call_response.content
                 self.format_function_call_results(messages=messages, function_call_results=function_call_results, **model_response.extra or {})
@@ -1318,7 +1304,7 @@ class Model(ABC):
             if stream_data.response_audio:
                 assistant_message.audio_output = stream_data.response_audio
             if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
-                assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+                assistant_message.tool_calls = stream_data.response_tool_calls
             messages.append(assistant_message)
             assistant_message.log(metrics=True)
             if assistant_message.tool_calls is not None:
@@ -1365,7 +1351,7 @@ class Model(ABC):
             if stream_data.response_audio:
                 assistant_message.audio_output = stream_data.response_audio
             if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
-                assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+                assistant_message.tool_calls = stream_data.response_tool_calls
             messages.append(assistant_message)
             assistant_message.log(metrics=True)
             if assistant_message.tool_calls is not None:
@@ -1440,9 +1426,6 @@ class Model(ABC):
         if should_yield:
             yield model_response
 
-    def parse_tool_calls(self, tool_calls_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        return tool_calls_data
-
     def get_function_calls_to_run(self, assistant_message: Message, messages: List[Message], error_response_role: str = 'user') -> List[FunctionCall]:
         function_calls_to_run: List[FunctionCall] = []
         if assistant_message.tool_calls is not None:
@@ -1458,30 +1441,6 @@ class Model(ABC):
                 function_calls_to_run.append(_function_call)
         return function_calls_to_run
 
-    def _handle_agent_exception(self, a_exc: AgentRunException, additional_messages: List[Message]) -> None:
-        if a_exc.user_message is not None:
-            msg = (Message(role='user', content=a_exc.user_message)
-                if isinstance(a_exc.user_message, str)
-                else a_exc.user_message)
-            additional_messages.append(msg)
-        if a_exc.agent_message is not None:
-            msg = (Message(role='assistant', content=a_exc.agent_message)
-                if isinstance(a_exc.agent_message, str)
-                else a_exc.agent_message)
-            additional_messages.append(msg)
-        if a_exc.messages:
-            for m in a_exc.messages:
-                if isinstance(m, Message):
-                    additional_messages.append(m)
-                elif isinstance(m, dict):
-                    try:
-                        additional_messages.append(Message(**m))
-                    except Exception as e:
-                        print(f'无法将字典转换为消息: {e}')
-        if a_exc.stop_execution:
-            for m in additional_messages:
-                m.stop_after_tool_call = True
-
     def _create_function_call_result(self, fc: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer) -> Message:
         return Message(role=self.tool_message_role, content=output if success else fc.error, tool_call_id=fc.call_id, tool_name=fc.function.name, tool_args=fc.arguments, tool_call_error=not success, stop_after_tool_call=fc.function.stop_after_tool_call, metrics=MessageMetrics(time=timer.elapsed))
 
@@ -1492,13 +1451,10 @@ class Model(ABC):
         for fc in function_calls:
             function_call_timer = Timer()
             function_call_timer.start()
-            yield ModelResponse(content=fc.get_call_str(), tool_calls=[{'role': self.tool_message_role, 'tool_call_id': fc.call_id, 'tool_name': fc.function.name, 'tool_args': fc.arguments}], event=ModelResponseEvent.tool_call_started.value)
+            yield ModelResponse(content=fc.get_call_str(), tool_calls=[{'role': self.tool_message_role, 'tool_call_id': fc.call_id, 'tool_name': fc.function.name, 'tool_args': fc.arguments}], event=ResponseEvent.start.value)
             function_call_success = False
             try:
                 function_call_success = fc.execute()
-            except AgentRunException as a_exc:
-                self._handle_agent_exception(a_exc, additional_messages)
-                function_call_success = False
             except Exception as e:
                 print(f'Error executing function {fc.function.name}: {e}')
                 function_call_success = False
@@ -1515,7 +1471,7 @@ class Model(ABC):
                 if fc.function.show_result:
                     yield ModelResponse(content=function_call_output)
             function_call_result = self._create_function_call_result(fc, function_call_success, function_call_output, function_call_timer)
-            yield ModelResponse(content=f'{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.', tool_calls=[function_call_result.to_function_call_dict()], event=ModelResponseEvent.tool_call_completed.value)
+            yield ModelResponse(content=f'{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.', tool_calls=[function_call_result.to_function_call_dict()], event=ResponseEvent.end.value)
             function_call_results.append(function_call_result)
             self._function_call_stack.append(fc)
             if self.tool_call_limit and len(self._function_call_stack) >= self.tool_call_limit:
@@ -1524,17 +1480,15 @@ class Model(ABC):
         if additional_messages:
             function_call_results.extend(additional_messages)
 
-    async def _arun_function_call(self, function_call: FunctionCall) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall]:
+    async def _arun_function_call(self, function_call: FunctionCall) -> Tuple[bool, Timer, FunctionCall]:
         function_call_timer = Timer()
         function_call_timer.start()
-        success: Union[bool, AgentRunException] = False
+        success = False
         try:
             if inspect.iscoroutinefunction(function_call.function.entrypoint) or inspect.isasyncgenfunction(function_call.function.entrypoint) or inspect.iscoroutine(function_call.function.entrypoint):
                 success = await function_call.aexecute()
             else:
                 success = await asyncio.to_thread(function_call.execute)
-        except AgentRunException as e:
-            success = e
         except Exception as e:
             print(f'Error executing function {function_call.function.name}: {e}')
             success = False
@@ -1547,17 +1501,13 @@ class Model(ABC):
             self._function_call_stack = []
         additional_messages: List[Message] = []
         for fc in function_calls:
-            yield ModelResponse(content=fc.get_call_str(), tool_calls=[{'role': self.tool_message_role, 'tool_call_id': fc.call_id, 'tool_name': fc.function.name, 'tool_args': fc.arguments}], event=ModelResponseEvent.tool_call_started.value)
+            yield ModelResponse(content=fc.get_call_str(), tool_calls=[{'role': self.tool_message_role, 'tool_call_id': fc.call_id, 'tool_name': fc.function.name, 'tool_args': fc.arguments}], event=ResponseEvent.start.value)
         results = await asyncio.gather(*(self._arun_function_call(fc) for fc in function_calls), return_exceptions=True)
         for result in results:
             if isinstance(result, BaseException):
                 print(f'Error during function call: {result}')
                 raise result
             function_call_success, function_call_timer, fc = result
-            if isinstance(function_call_success, AgentRunException):
-                a_exc = function_call_success
-                self._handle_agent_exception(a_exc, additional_messages)
-                function_call_success = False
             function_call_output: Optional[Union[List[Any], str]] = ''
             if isinstance(fc.result, (types.GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
@@ -1574,7 +1524,7 @@ class Model(ABC):
                 if fc.function.show_result:
                     yield ModelResponse(content=function_call_output)
             function_call_result = self._create_function_call_result(fc, function_call_success, function_call_output, function_call_timer)
-            yield ModelResponse(content=f'{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.', tool_calls=[function_call_result.to_function_call_dict()], event=ModelResponseEvent.tool_call_completed.value)
+            yield ModelResponse(content=f'{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.', tool_calls=[function_call_result.to_function_call_dict()], event=ResponseEvent.end.value)
             function_call_results.append(function_call_result)
             self._function_call_stack.append(fc)
             if self.tool_call_limit and len(self._function_call_stack) >= self.tool_call_limit:
@@ -2012,29 +1962,6 @@ class OllamaTools(Ollama):
         return self.get_instructions_to_generate_tool_calls()
 
 
-class NextAction(str, Enum):
-    CONTINUE = 'continue'
-    VALIDATE = 'validate'
-    FINAL_ANSWER = 'final_answer'
-    RESET = 'reset'
-
-
-class RunEvent(str, Enum):
-    run_started = 'RunStarted'
-    run_response = 'RunResponse'
-    run_completed = 'RunCompleted'
-    run_error = 'RunError'
-    run_cancelled = 'RunCancelled'
-    tool_call_started = 'ToolCallStarted'
-    tool_call_completed = 'ToolCallCompleted'
-    reasoning_started = 'ReasoningStarted'
-    reasoning_step = 'ReasoningStep'
-    reasoning_completed = 'ReasoningCompleted'
-    updating_memory = 'UpdatingMemory'
-    workflow_started = 'WorkflowStarted'
-    workflow_completed = 'WorkflowCompleted'
-
-
 class RunMessages:
     def __init__(self, messages: List[Message] = None, system_message: Message = None, user_message: Message = None, extra_messages: List[Message] = None):
         self.messages = messages or []
@@ -2051,7 +1978,7 @@ class ReasoningStep(BaseModel):
     action: Optional[str] = Field(None, description='此步骤衍生出的操作。用第一人称说话')
     result: Optional[str] = Field(None, description='执行动作的结果。用第一人称说话')
     reasoning: Optional[str] = Field(None, description='这一步骤背后的思考过程和考虑因素')
-    next_action: Optional[NextAction] = Field(None, description='指示是继续推理、验证提供的结果，还是确认结果是最终答案')
+    over: Optional[bool] = Field(False, description='指示是继续推理、验证提供的结果，还是确认结果是最终答案')
     confidence: Optional[float] = Field(None, description='此步骤的置信度得分(0.0至1.0)')
 
 
@@ -3786,7 +3713,7 @@ class Agent:
         if self.stream:
             model_response = ModelResponse()
             for model_response_chunk in self.model.response_stream(messages=run_messages.messages):
-                if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
+                if model_response_chunk.event == ResponseEvent.res.value:
                     if model_response_chunk.content is not None:
                         model_response.content = (model_response.content or '') + model_response_chunk.content
                         self.run_response.content = model_response.content
@@ -3821,7 +3748,7 @@ class Agent:
                     if model_response_chunk.image is not None:
                         self.add_image(model_response_chunk.image)
                         yield self.run_response
-                elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
+                elif model_response_chunk.event == ResponseEvent.start.value:
                     tool_calls_list = model_response_chunk.tool_calls
                     if tool_calls_list is not None:
                         if self.run_response.tools is None:
@@ -3831,7 +3758,7 @@ class Agent:
                         self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
                     if self.stream_intermediate_steps:
                         yield self.create_run_response(content=model_response_chunk.content, event=RunEvent.tool_call_started)
-                elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
+                elif model_response_chunk.event == ResponseEvent.end.value:
                     tool_calls_list = model_response_chunk.tool_calls
                     if tool_calls_list is not None:
                         if self.run_response.tools:
@@ -4017,7 +3944,7 @@ class Agent:
             model_response = ModelResponse(content='')
             model_response_stream = self.model.aresponse_stream(messages=run_messages.messages)
             async for model_response_chunk in model_response_stream:
-                if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
+                if model_response_chunk.event == ResponseEvent.res.value:
                     if model_response_chunk.content is not None:
                         model_response.content = (model_response.content or '') + model_response_chunk.content
                         self.run_response.content = model_response.content
@@ -4052,7 +3979,7 @@ class Agent:
                     if model_response_chunk.image is not None:
                         self.add_image(model_response_chunk.image)
                         yield self.run_response
-                elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
+                elif model_response_chunk.event == ResponseEvent.start.value:
                     tool_calls_list = model_response_chunk.tool_calls
                     if tool_calls_list is not None:
                         if self.run_response.tools is None:
@@ -4062,7 +3989,7 @@ class Agent:
                         self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
                     if self.stream_intermediate_steps:
                         yield self.create_run_response(content=model_response_chunk.content, event=RunEvent.tool_call_started)
-                elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
+                elif model_response_chunk.event == ResponseEvent.end.value:
                     tool_calls_list = model_response_chunk.tool_calls
                     if tool_calls_list is not None:
                         if self.run_response.tools:
@@ -5134,11 +5061,10 @@ class Agent:
         reasoning_agent.show_tool_calls = False
         reasoning_agent.model.show_tool_calls = False
         step_count = 1
-        next_action = NextAction.CONTINUE
         reasoning_messages: List[Message] = []
         all_reasoning_steps: List[ReasoningStep] = []
         print('Starting Reasoning')
-        while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
+        while step_count < self.reasoning_max_steps:
             print(f'Step {step_count}')
             step_count += 1
             try:
@@ -5157,13 +5083,7 @@ class Agent:
                 first_assistant_index = next((i for i, m in enumerate(reasoning_agent_response.messages) if m.role == 'assistant'), len(reasoning_agent_response.messages))
                 reasoning_messages = reasoning_agent_response.messages[first_assistant_index:]
                 self.update_run_response_with_reasoning(reasoning_steps=reasoning_steps, reasoning_agent_messages=reasoning_agent_response.messages)
-                next_action = reasoning_steps[-1].next_action or NextAction.FINAL_ANSWER
-                if isinstance(next_action, str):
-                    try:
-                        next_action = NextAction(next_action)
-                    except ValueError:
-                        next_action = NextAction.FINAL_ANSWER
-                if next_action == NextAction.FINAL_ANSWER:
+                if reasoning_steps[-1].over:
                     break
             except Exception as e:
                 print(f'Reasoning error: {e}')
@@ -5205,11 +5125,10 @@ class Agent:
         reasoning_agent.show_tool_calls = False
         reasoning_agent.model.show_tool_calls = False
         step_count = 1
-        next_action = NextAction.CONTINUE
         reasoning_messages: List[Message] = []
         all_reasoning_steps: List[ReasoningStep] = []
         print('Starting Reasoning')
-        while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
+        while step_count < self.reasoning_max_steps:
             print(f'Step {step_count}')
             step_count += 1
             try:
@@ -5228,13 +5147,7 @@ class Agent:
                 first_assistant_index = next((i for i, m in enumerate(reasoning_agent_response.messages) if m.role == 'assistant'), len(reasoning_agent_response.messages))
                 reasoning_messages = reasoning_agent_response.messages[first_assistant_index:]
                 self.update_run_response_with_reasoning(reasoning_steps=reasoning_steps, reasoning_agent_messages=reasoning_agent_response.messages)
-                next_action = reasoning_steps[-1].next_action or NextAction.FINAL_ANSWER
-                if isinstance(next_action, str):
-                    try:
-                        next_action = NextAction(next_action)
-                    except ValueError:
-                        next_action = NextAction.FINAL_ANSWER
-                if next_action == NextAction.FINAL_ANSWER:
+                if reasoning_steps[-1].over:
                     break
             except Exception as e:
                 print(f'Reasoning error: {e}')
@@ -5778,7 +5691,7 @@ class Team:
         full_model_response = ModelResponse()
         model_stream = self.model.response_stream(messages=run_messages.messages)
         for model_response_chunk in model_stream:
-            if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
+            if model_response_chunk.event == ResponseEvent.res.value:
                 should_yield = False
                 if model_response_chunk.content is not None:
                     if not full_model_response.content:
@@ -5819,7 +5732,7 @@ class Team:
                                                     response_audio=model_response_chunk.audio,
                                                     citations=model_response_chunk.citations,
                                                     created_at=model_response_chunk.created_at)
-            elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
+            elif model_response_chunk.event == ResponseEvent.start.value:
                 tool_calls_list = model_response_chunk.tool_calls
                 if tool_calls_list is not None:
                     if run_response.tools is None:
@@ -5830,7 +5743,7 @@ class Team:
                 if stream_intermediate_steps:
                     yield self._create_run_response(content=model_response_chunk.content,
                                                     event=RunEvent.tool_call_started, from_run_response=run_response)
-            elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
+            elif model_response_chunk.event == ResponseEvent.end.value:
                 tool_calls_list = model_response_chunk.tool_calls
                 if tool_calls_list is not None:
                     if run_response.tools:
@@ -6079,7 +5992,7 @@ class Team:
         full_model_response = ModelResponse()
         model_stream = self.model.aresponse_stream(messages=run_messages.messages)
         async for model_response_chunk in model_stream:
-            if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
+            if model_response_chunk.event == ResponseEvent.res.value:
                 should_yield = False
                 if model_response_chunk.content is not None:
                     if not full_model_response.content:
@@ -6120,7 +6033,7 @@ class Team:
                                                     response_audio=model_response_chunk.audio,
                                                     citations=model_response_chunk.citations,
                                                     created_at=model_response_chunk.created_at)
-            elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
+            elif model_response_chunk.event == ResponseEvent.start.value:
                 tool_calls_list = model_response_chunk.tool_calls
                 if tool_calls_list is not None:
                     if run_response.tools is None:
@@ -6131,7 +6044,7 @@ class Team:
                 if stream_intermediate_steps:
                     yield self._create_run_response(content=model_response_chunk.content,
                                                     event=RunEvent.tool_call_started, from_run_response=run_response)
-            elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
+            elif model_response_chunk.event == ResponseEvent.end.value:
                 tool_calls_list = model_response_chunk.tool_calls
                 if tool_calls_list is not None:
                     if run_response.tools:
