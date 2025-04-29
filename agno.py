@@ -2,7 +2,6 @@ import re
 import os
 import json
 import time
-import yaml
 import string
 import chromadb
 import asyncio
@@ -27,7 +26,6 @@ import base64
 import zlib
 import functools
 import docstring_parser
-import tempfile
 import sqlalchemy
 from rich.box import HEAVY
 from rich.panel import Panel
@@ -41,7 +39,6 @@ from rich.text import Text
 from enum import Enum
 from datetime import datetime
 from copy import copy, deepcopy
-from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Set, Type, Union, Tuple, AsyncGenerator, Mapping, get_type_hints, get_args, get_origin
 
 
@@ -363,7 +360,7 @@ class Function(Base):
         return hashlib.md5(key_str.encode()).hexdigest()
 
     def _get_cache_file_path(self, cache_key: str) -> str:
-        base_cache_dir = self.cache_dir or pathlib.Path(tempfile.gettempdir()) / 'agno_cache'
+        base_cache_dir = self.cache_dir
         func_cache_dir = pathlib.Path(base_cache_dir) / 'functions' / self.name
         func_cache_dir.mkdir(parents=True, exist_ok=True)
         return str(func_cache_dir / f'{cache_key}.json')
@@ -1066,27 +1063,21 @@ class Model(Base):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
-    @abstractmethod
     def invoke(self, *args, **kwargs) -> Any:
         pass
 
-    @abstractmethod
     async def ainvoke(self, *args, **kwargs) -> Any:
         pass
 
-    @abstractmethod
     def invoke_stream(self, *args, **kwargs) -> Iterator[Any]:
         pass
 
-    @abstractmethod
     async def ainvoke_stream(self, *args, **kwargs) -> AsyncGenerator[Any, None]:
         pass
 
-    @abstractmethod
     def parse_provider_response(self, response: Any) -> ModelResponse:
         pass
 
-    @abstractmethod
     def parse_provider_response_delta(self, response: Any) -> ModelResponse:
         pass
 
@@ -3445,7 +3436,7 @@ class Agent:
                  session_state: Dict[str, Any] = None, context: Dict[str, Any] = None, add_context=False,
                  resolve_context=True, memory: AgentMemory = None, add_history_to_messages=False,
                  num_history_responses: int = None, num_history_runs=3, knowledge: Knowledge = None,
-                 add_references=False, retriever: Callable[..., List[Dict]] = None, references_format: Literal['json', 'yaml'] = 'json',
+                 add_references=False, retriever: Callable[..., List[Dict]] = None,
                  storage: Storage = None, extra_data: Dict[str, Any] = None, tools: List[Union[Toolkit, Callable, Function, Dict]] = None,
                  show_tool_calls=True, tool_call_limit: int = None, tool_choice: Union[str, Dict[str, Any]] = None, reasoning=False,
                  reasoning_model: Model = None, reasoning_agent: 'Agent' = None, reasoning_min_steps=1,
@@ -3478,7 +3469,6 @@ class Agent:
         self.knowledge = knowledge
         self.add_references = add_references
         self.retriever = retriever
-        self.references_format = references_format
         self.storage = storage
         self.extra_data = extra_data
         self.tools = tools
@@ -4812,8 +4802,6 @@ class Agent:
     def convert_documents_to_string(self, docs: List[Dict[str, Any]]) -> str:
         if docs is None or len(docs) == 0:
             return ''
-        if self.references_format == 'yaml':
-            return yaml.dump(docs)
         return json.dumps(docs, indent=2)
 
     def convert_context_to_string(self, context: Dict[str, Any]) -> str:
