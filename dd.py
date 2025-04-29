@@ -1,8 +1,7 @@
 import json
 from textwrap import dedent
-from typing import Dict, Iterator, Optional, Union, Any, Optional, Iterable
-from agno import Agent, Team, RunResponse, Workflow, Knowledge, Ollama, Toolkit
-from pydantic import BaseModel, Field
+from typing import Dict, Iterator, Any, Optional
+from agno import Agent, Team, RunResponse, Workflow, Knowledge, Ollama, Toolkit, Function, MessageMetrics, Message, Base, VideoArtifact
 from duckduckgo_search import DDGS
 import yfinance as yf
 
@@ -118,25 +117,25 @@ class NewspaperTools(Toolkit):
         return article.text
 
 
-class StockAnalysis(BaseModel):
+class StockAnalysis(Base):
     symbol: str
     company_name: str
     analysis: str
 
 
-stock_searcher = Agent(name='stock resercher', model=Ollama('llama3.1:8b'), response_model=StockAnalysis, role='在网上搜索股票信息。', tools=[
+stock_searcher = Agent(name='stock resercher', model=Ollama(id='llama3.1:8b'), response_model=StockAnalysis, role='在网上搜索股票信息。', tools=[
         YFinanceTools(stock_price=True, analyst_recommendations=True)
     ])
 
 
-class CompanyAnalysis(BaseModel):
+class CompanyAnalysis(Base):
     company_name: str
     analysis: str
 
 
-company_info_agent = Agent(name='company info researcher', model=Ollama('llama3.1:8b'), role='在网上搜索股票信息。', response_model=CompanyAnalysis, tools=[YFinanceTools(stock_price=False, company_info=True, company_news=True)])
+company_info_agent = Agent(name='company info researcher', model=Ollama(id='llama3.1:8b'), role='在网上搜索股票信息。', response_model=CompanyAnalysis, tools=[YFinanceTools(stock_price=False, company_info=True, company_news=True)])
 
-team = Team(name='股票研究团队', mode='route', model=Ollama('llama3.1:8b'), members=[stock_searcher, company_info_agent], markdown=True, debug_mode=True, show_members_responses=True)
+team = Team(name='股票研究团队', mode='route', model=Ollama(id='llama3.1:8b'), members=[stock_searcher, company_info_agent], markdown=True, debug_mode=True, show_members_responses=True)
 response = team.run('NVDA目前的股价是多少？')
 assert isinstance(response.content, StockAnalysis)
 print(response.content)
@@ -157,19 +156,19 @@ finance_agent = Agent(name='Finance Agent', role='获取财务数据', model=Oll
 agent_team = Team(mode='coordinate', members=[web_agent, finance_agent], model=Ollama(), success_criteria='一份全面的财经新闻报道，有清晰的章节和数据驱动的见解。', instructions=['始终包含来源', '使用表格显示数据'], show_tool_calls=True, markdown=True)
 agent_team.print_response("AI半导体公司的市场前景和财务业绩如何?")
 
-class Article(BaseModel):
-    title: str = Field(..., description='Title of the article.')
-    url: str = Field(..., description='Link to the article.')
-    summary: Optional[str] = Field(..., description='Summary of the article if available.')
+class Article(Base):
+    title: str  # 'Title of the article.')
+    url: str  # description='Link to the article.')
+    summary: str  # 'Summary of the article if available.')
 
-class SearchResults(BaseModel):
+class SearchResults(Base):
     articles: list[Article]
 
-class ScrapedArticle(BaseModel):
-    title: str = Field(..., description='Title of the article.')
-    url: str = Field(..., description='Link to the article.')
-    summary: Optional[str] = Field(..., description='Summary of the article if available.')
-    content: Optional[str] = Field(..., description='Content of the in markdown format if available. Return None if the content is not available or does not make sense.')
+class ScrapedArticle(Base):
+    title: str  # 'Title of the article.'
+    url: str  # 'Link to the article.'
+    summary: str  # ='Summary of the article if available.'
+    content: str  # 'Content of the in markdown format if available. Return None if the content is not available or does not make sense.'
 
 
 class ResearchReportGenerator(Workflow):

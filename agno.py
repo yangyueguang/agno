@@ -42,8 +42,6 @@ from enum import Enum
 from datetime import datetime
 from copy import copy, deepcopy
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Set, Type, Union, Tuple, AsyncGenerator, Mapping, get_type_hints, get_args, get_origin
 
 
@@ -81,6 +79,28 @@ class Dot(dict):
         return temp
 
 
+class Base:
+    def __init__(self, **kwargs):
+        annotations = {}
+        for cls in self.__class__.__mro__:
+            annotations.update(cls.__dict__.get('__annotations__', {}))
+        for k, v in annotations.items():
+            if k in kwargs:
+                setattr(self, k, kwargs[k])
+            else:
+                if hasattr(self.__class__, k):
+                    setattr(self, k, getattr(self.__class__, k))
+                else:
+                    setattr(self, k, None if v == Any else (get_origin(v) or v)())
+
+    def __repr__(self):
+        attrs = ', '.join(f"{attr}={getattr(self, attr)!r}" for attr in self.__class__.__annotations__)
+        return f"{self.__class__.__name__}({attrs})"
+
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
+        return {k: v for k, v in self.__dict__.items() if not k.startswith('_') and (v or not no_none) and (not include or (k in include))}
+
+
 class ResponseEvent(Enum):
     start = 'start'
     end = 'end'
@@ -105,9 +125,9 @@ class RunEvent(Enum):
 
 class Timer:
     def __init__(self):
-        self.start_time: Optional[float] = None
-        self.end_time: Optional[float] = None
-        self.elapsed_time: Optional[float] = None
+        self.start_time: float = 0
+        self.end_time: float = 0.0
+        self.elapsed_time: float = 0.0
 
     @property
     def elapsed(self) -> float:
@@ -119,7 +139,7 @@ class Timer:
 
     def stop(self) -> float:
         self.end_time = time.perf_counter()
-        if self.start_time is not None:
+        if self.start_time:
             self.elapsed_time = self.end_time - self.start_time
         return self.end_time
 
@@ -131,15 +151,6 @@ class Timer:
         self.end_time = time.perf_counter()
         if self.start_time is not None:
             self.elapsed_time = self.end_time - self.start_time
-
-
-class AgentRunException(Exception):
-    def __init__(self, exc, user_message: str = None, agent_message: str = None, messages: Optional[List[dict]] = None, stop_execution: bool = False):
-        super().__init__(exc)
-        self.user_message = user_message
-        self.agent_message = agent_message
-        self.messages = messages
-        self.stop_execution = stop_execution
 
 
 def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
@@ -177,25 +188,25 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
     return json_schema
 
 
-class Function(BaseModel):
+class Function(Base):
     name: str
-    description: Optional[str] = None
-    parameters: Dict[str, Any] = Field(default_factory=lambda: {'type': 'object', 'properties': {}, 'required': []}, description='JSON Schema object describing function parameters')
-    strict: Optional[bool] = None
-    entrypoint: Optional[Callable] = None
-    skip_entrypoint_processing: bool = False
+    entrypoint: Callable = None
     sanitize_arguments: bool = True
-    show_result: bool = False
-    stop_after_tool_call: bool = False
-    pre_hook: Optional[Callable] = None
-    post_hook: Optional[Callable] = None
-    cache_results: bool = False
-    cache_dir: Optional[str] = None
-    cache_ttl: int = 3600
-    _agent: Optional[Any] = None
+    cache_results = False
+    cache_dir = ''
+    cache_ttl = 3600
+    description = ''
+    parameters = {'type': 'object', 'properties': {}, 'required': []}
+    strict = False
+    skip_entrypoint_processing = False
+    show_result = False
+    stop_after_tool_call = False
+    pre_hook: Callable = None
+    post_hook: Callable = None
+    _agent = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        return self.model_dump(exclude_none=True, include={'name', 'description', 'parameters', 'strict'})
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
+        return super().to_dict(include=include or {'name', 'description', 'parameters', 'strict'})
 
     @classmethod
     def get_entrypoint_docstring(cls, entrypoint: Callable) -> str:
@@ -213,7 +224,7 @@ class Function(BaseModel):
         return '\n'.join(lines)
 
     @classmethod
-    def get_json_schema(cls, type_hints: Dict[str, Any], param_descriptions: Optional[Dict[str, str]] = None,
+    def get_json_schema(cls, type_hints: Dict[str, Any], param_descriptions: Dict[str, str] = None,
                         strict: bool = False) -> Dict[str, Any]:
         json_schema: Dict[str, Any] = {'type': 'object', 'properties': {}}
         if strict:
@@ -342,7 +353,7 @@ class Function(BaseModel):
             return json.dumps(function_info, indent=2)
         return None
 
-    def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
+    def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Dict[str, Any] = None) -> str:
         copy_entrypoint_args = entrypoint_args.copy()
         if 'agent' in copy_entrypoint_args:
             del copy_entrypoint_args['agent']
@@ -381,12 +392,12 @@ class Function(BaseModel):
             print(f'Error writing cache: {e}')
 
 
-class FunctionCall(BaseModel):
-    function: Function
-    arguments: Optional[Dict[str, Any]] = None
-    result: Optional[Any] = None
-    call_id: Optional[str] = None
-    error: Optional[str] = None
+class FunctionCall(Base):
+    function: Function = None
+    arguments: Dict[str, Any]
+    result: Any = None
+    call_id = ''
+    error = ''
 
     def get_call_str(self) -> str:
         term_width = shutil.get_terminal_size().columns or 80
@@ -404,7 +415,11 @@ class FunctionCall(BaseModel):
             return f'{self.function.name}(...)'
         return call_str
 
-    def _handle_pre_hook(self):
+    def execute(self) -> bool:
+        if self.function.entrypoint is None:
+            return False
+        print(f'Running: {self.get_call_str()}')
+        function_call_success = False
         if self.function.pre_hook is not None:
             try:
                 pre_hook_args = {}
@@ -416,35 +431,11 @@ class FunctionCall(BaseModel):
             except Exception as e:
                 print(f'Error in pre-hook callback: {e}')
                 print(e)
-
-    def _handle_post_hook(self):
-        if self.function.post_hook is not None:
-            try:
-                post_hook_args = {}
-                if 'agent' in inspect.signature(self.function.post_hook).parameters:
-                    post_hook_args['agent'] = self.function._agent
-                if 'fc' in inspect.signature(self.function.post_hook).parameters:
-                    post_hook_args['fc'] = self
-                self.function.post_hook(**post_hook_args)
-            except Exception as e:
-                print(f'Error in post-hook callback: {e}')
-                print(e)
-
-    def _build_entrypoint_args(self) -> Dict[str, Any]:
         entrypoint_args = {}
         if 'agent' in inspect.signature(self.function.entrypoint).parameters:
             entrypoint_args['agent'] = self.function._agent
         if 'fc' in inspect.signature(self.function.entrypoint).parameters:
             entrypoint_args['fc'] = self
-        return entrypoint_args
-
-    def execute(self) -> bool:
-        if self.function.entrypoint is None:
-            return False
-        print(f'Running: {self.get_call_str()}')
-        function_call_success = False
-        self._handle_pre_hook()
-        entrypoint_args = self._build_entrypoint_args()
         if self.function.cache_results and not inspect.isgenerator(self.function.entrypoint):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
@@ -473,23 +464,6 @@ class FunctionCall(BaseModel):
             print(e)
             self.error = str(e)
             return function_call_success
-        self._handle_post_hook()
-        return function_call_success
-
-    async def _handle_pre_hook_async(self):
-        if self.function.pre_hook is not None:
-            try:
-                pre_hook_args = {}
-                if 'agent' in inspect.signature(self.function.pre_hook).parameters:
-                    pre_hook_args['agent'] = self.function._agent
-                if 'fc' in inspect.signature(self.function.pre_hook).parameters:
-                    pre_hook_args['fc'] = self
-                await self.function.pre_hook(**pre_hook_args)
-            except Exception as e:
-                print(f'Error in pre-hook callback: {e}')
-                print(e)
-
-    async def _handle_post_hook_async(self):
         if self.function.post_hook is not None:
             try:
                 post_hook_args = {}
@@ -497,10 +471,11 @@ class FunctionCall(BaseModel):
                     post_hook_args['agent'] = self.function._agent
                 if 'fc' in inspect.signature(self.function.post_hook).parameters:
                     post_hook_args['fc'] = self
-                await self.function.post_hook(**post_hook_args)
+                self.function.post_hook(**post_hook_args)
             except Exception as e:
                 print(f'Error in post-hook callback: {e}')
                 print(e)
+        return function_call_success
 
     async def aexecute(self) -> bool:
         if self.function.entrypoint is None:
@@ -508,10 +483,34 @@ class FunctionCall(BaseModel):
         print(f'Running: {self.get_call_str()}')
         function_call_success = False
         if inspect.iscoroutinefunction(self.function.pre_hook):
-            await self._handle_pre_hook_async()
+            if self.function.pre_hook is not None:
+                try:
+                    pre_hook_args = {}
+                    if 'agent' in inspect.signature(self.function.pre_hook).parameters:
+                        pre_hook_args['agent'] = self.function._agent
+                    if 'fc' in inspect.signature(self.function.pre_hook).parameters:
+                        pre_hook_args['fc'] = self
+                    await self.function.pre_hook(**pre_hook_args)
+                except Exception as e:
+                    print(f'Error in pre-hook callback: {e}')
+                    print(e)
         else:
-            self._handle_pre_hook()
-        entrypoint_args = self._build_entrypoint_args()
+            if self.function.pre_hook is not None:
+                try:
+                    pre_hook_args = {}
+                    if 'agent' in inspect.signature(self.function.pre_hook).parameters:
+                        pre_hook_args['agent'] = self.function._agent
+                    if 'fc' in inspect.signature(self.function.pre_hook).parameters:
+                        pre_hook_args['fc'] = self
+                    self.function.pre_hook(**pre_hook_args)
+                except Exception as e:
+                    print(f'Error in pre-hook callback: {e}')
+                    print(e)
+        entrypoint_args = {}
+        if 'agent' in inspect.signature(self.function.entrypoint).parameters:
+            entrypoint_args['agent'] = self.function._agent
+        if 'fc' in inspect.signature(self.function.entrypoint).parameters:
+            entrypoint_args['fc'] = self
         if self.function.cache_results and not (inspect.isasyncgen(self.function.entrypoint) or inspect.isgenerator(self.function.entrypoint)):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
@@ -545,72 +544,39 @@ class FunctionCall(BaseModel):
             self.error = str(e)
             return function_call_success
         if inspect.iscoroutinefunction(self.function.post_hook):
-            await self._handle_post_hook_async()
+            if self.function.post_hook is not None:
+                try:
+                    post_hook_args = {}
+                    if 'agent' in inspect.signature(self.function.post_hook).parameters:
+                        post_hook_args['agent'] = self.function._agent
+                    if 'fc' in inspect.signature(self.function.post_hook).parameters:
+                        post_hook_args['fc'] = self
+                    await self.function.post_hook(**post_hook_args)
+                except Exception as e:
+                    print(f'Error in post-hook callback: {e}')
+                    print(e)
         else:
-            self._handle_post_hook()
+            if self.function.post_hook is not None:
+                try:
+                    post_hook_args = {}
+                    if 'agent' in inspect.signature(self.function.post_hook).parameters:
+                        post_hook_args['agent'] = self.function._agent
+                    if 'fc' in inspect.signature(self.function.post_hook).parameters:
+                        post_hook_args['fc'] = self
+                    self.function.post_hook(**post_hook_args)
+                except Exception as e:
+                    print(f'Error in post-hook callback: {e}')
+                    print(e)
         return function_call_success
 
 
-def tool(name: Optional[str] = None, description: Optional[str] = None, strict: Optional[bool] = None, sanitize_arguments: Optional[bool] = None,
-         show_result: Optional[bool] = None, stop_after_tool_call: Optional[bool] = None, pre_hook: Optional[Callable] = None, post_hook: Optional[Callable] = None,
-         cache_results: bool = False, cache_dir: Optional[str] = None, cache_ttl: int = 3600) -> Function:
-    """Decorator将函数转换为代理可以使用的函数。
-    Args：
-    name:可选[str]-覆盖函数名
-    description:可选[str]-函数描述的覆盖
-    strict:可选[bool]-用于严格参数检查的标志
-    sanctize_arguments：可选[bool]-如果为True，则在传递给函数之前对参数进行净化
-    show_result：可选[bool]-如果为True，则显示函数调用后的结果
-    stop_after_tool_call：可选[bool]-如果为True，代理将在函数调用后停止。
-    pre_hook：可选[Calable]-在函数执行之前运行的钩子。
-    post_hook：可选[Calable]-在函数执行后运行的钩子。
-    cache_results:bool-如果为True，则启用函数结果的缓存
-    cache_dir：可选[str]-存储缓存文件的目录
-    cache_ttl:int-缓存结果的生存时间（秒）
-    return:
-    Union[函数，可调用[[F]，函数]]：装饰函数或装饰器"""
-    def decorator(func: Callable) -> Function:
-        @functools.wraps(func)
-        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                print(f'Error in tool {func.__name__!r}: {e!r}', exc_info=True)
-                raise
-        @functools.wraps(func)
-        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            try:
-                return await func(*args, **kwargs)
-            except Exception as e:
-                print(f'Error in async tool {func.__name__!r}: {e!r}', exc_info=True)
-                raise
-        @functools.wraps(func)
-        async def async_gen_wrapper(*args: Any, **kwargs: Any) -> Any:
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                print(f'Error in async generator tool {func.__name__!r}: {e!r}', exc_info=True)
-                raise
-        if inspect.isasyncgenfunction(func):
-            wrapper = async_gen_wrapper
-        elif inspect.iscoroutinefunction(func) or inspect.iscoroutine(func):
-            wrapper = async_wrapper
-        else:
-            wrapper = sync_wrapper
-        functools.update_wrapper(wrapper, func)
-        return Function(**{'name': name or func.__name__, 'description': description or inspect.getdoc(func), 'entrypoint': wrapper, 'cache_results': cache_results, 'cache_dir': cache_dir, 'cache_ttl': cache_ttl})
-    if callable(name):
-        return decorator(name)
-    return decorator
-
-
 class Toolkit:
-    def __init__(self, name: str = 'toolkit', cache_results: bool = False, cache_ttl: int = 3600, cache_dir: Optional[str] = None):
+    def __init__(self, name: str = 'toolkit', cache_results: bool = False, cache_ttl: int = 3600, cache_dir: str = ''):
         self.name: str = name
         self.functions: Dict[str, Function] = collections.OrderedDict()
         self.cache_results: bool = cache_results
         self.cache_ttl: int = cache_ttl
-        self.cache_dir: Optional[str] = cache_dir
+        self.cache_dir: str = cache_dir
 
     def register(self, function: Callable[..., Any], sanitize_arguments: bool = True):
         try:
@@ -631,38 +597,38 @@ class Toolkit:
         return self.__repr__()
 
 
-class Media(BaseModel):
-    id: str
-    original_prompt: Optional[str] = None
-    revised_prompt: Optional[str] = None
+class Media(Base):
+    id: str = ''
+    original_prompt: str = ''
+    revised_prompt: str = ''
 
 
 class VideoArtifact(Media):
-    url: str
-    eta: Optional[str] = None
-    length: Optional[str] = None
+    url: str = ''
+    eta: str = ''
+    length: str = ''
 
 
 class ImageArtifact(Media):
-    url: Optional[str] = None
-    content: Optional[bytes] = None
-    mime_type: Optional[str] = None
-    alt_text: Optional[str] = None
+    url: str = ''
+    content: bytes = None
+    mime_type: str = ''
+    alt_text: str = ''
 
 
 class AudioArtifact(Media):
-    url: Optional[str] = None
-    base64_audio: Optional[str] = None
-    length: Optional[str] = None
-    mime_type: Optional[str] = None
+    url: str = ''
+    base64_audio: str = ''
+    length: str = ''
+    mime_type: str = ''
 
 
-class Video(BaseModel):
-    filepath: Optional[Union[pathlib.Path, str]] = None
-    content: Optional[Any] = None
-    format: Optional[str] = 'mp4'
+class Video(Base):
+    filepath: Union[pathlib.Path, str] = ''
+    content: Any = None
+    format = 'mp4'
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8') if self.content else None, 'filepath': self.filepath, 'format': self.format}
         return {k: v for k, v in response_dict.items() if v is not None}
 
@@ -671,11 +637,11 @@ class Video(BaseModel):
         return cls(url=artifact.url)
 
 
-class Audio(BaseModel):
-    content: Optional[Any] = None
-    filepath: Optional[Union[pathlib.Path, str]] = None
-    url: Optional[str] = None
-    format: Optional[str] = None
+class Audio(Base):
+    filepath: Union[pathlib.Path, str] = ''
+    content: Any = None
+    url = ''
+    format = 'mp3'
 
     @property
     def audio_url_content(self) -> Optional[bytes]:
@@ -684,10 +650,9 @@ class Audio(BaseModel):
         else:
             return None
 
-    def to_dict(self) -> Dict[str, Any]:
-        response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8')
-            if self.content
-            else None, 'filepath': self.filepath, 'format': self.format}
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
+        content = base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8') if self.content else None
+        response_dict = {'content': content, 'filepath': self.filepath, 'format': self.format}
         return {k: v for k, v in response_dict.items() if v is not None}
 
     @classmethod
@@ -695,29 +660,28 @@ class Audio(BaseModel):
         return cls(url=artifact.url, content=artifact.base64_audio, format=artifact.mime_type)
 
 
-class AudioResponse(BaseModel):
-    id: Optional[str] = None
-    content: Optional[str] = None
-    expires_at: Optional[int] = None
-    transcript: Optional[str] = None
-    mime_type: Optional[str] = None
-    sample_rate: Optional[int] = 24000
-    channels: Optional[int] = 1
+class AudioResponse(Base):
+    id: str = ''
+    content: str = ''
+    expires_at: int = 0
+    transcript: str = ''
+    mime_type: str = ''
+    sample_rate = 24000
+    channels: int = 1
 
-    def to_dict(self) -> Dict[str, Any]:
-        response_dict = {'id': self.id, 'content': base64.b64encode(self.content).decode('utf-8')
-            if isinstance(self.content, bytes)
-            else self.content, 'expires_at': self.expires_at, 'transcript': self.transcript, 'mime_type': self.mime_type, 'sample_rate': self.sample_rate, 'channels': self.channels}
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
+        content = base64.b64encode(self.content).decode('utf-8') if isinstance(self.content, bytes) else self.content
+        response_dict = {'id': self.id, 'content': content, 'expires_at': self.expires_at, 'transcript': self.transcript, 'mime_type': self.mime_type, 'sample_rate': self.sample_rate, 'channels': self.channels}
         return {k: v for k, v in response_dict.items() if v is not None}
 
 
-class Image(BaseModel):
-    url: Optional[str] = None
-    filepath: Optional[Union[pathlib.Path, str]] = None
-    content: Optional[Any] = None
-    format: Optional[str] = 'jpeg'
-    detail: Optional[str] = None
-    id: Optional[str] = None
+class Image(Base):
+    url: str = ''
+    filepath: Union[pathlib.Path, str] = ''
+    content: Any = None
+    format: str = 'jpeg'
+    detail: str = ''
+    id: str = ''
 
     @property
     def image_url_content(self) -> Optional[bytes]:
@@ -726,7 +690,7 @@ class Image(BaseModel):
         else:
             return None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8')
             if self.content
             else None, 'filepath': self.filepath, 'url': self.url, 'detail': self.detail}
@@ -737,11 +701,11 @@ class Image(BaseModel):
         return cls(url=artifact.url)
 
 
-class File(BaseModel):
-    url: Optional[str] = None
-    filepath: Optional[Union[pathlib.Path, str]] = None
-    content: Optional[Any] = None
-    mime_type: Optional[str] = None
+class File(Base):
+    url: str = ''
+    filepath: Union[pathlib.Path, str] = ''
+    content: Any = None
+    mime_type: str = ''
 
     @classmethod
     def valid_mime_types(cls) -> List[str]:
@@ -758,37 +722,36 @@ class File(BaseModel):
             return None
 
 
-class MessageReferences(BaseModel):
-    query: str
-    references: Optional[List[Dict[str, Any]]] = None
-    time: Optional[float] = None
+class MessageReferences(Base):
+    query = ''
+    time = 0.0
+    references: List[Dict[str, Any]]
 
 
-class DocumentCitation(BaseModel):
-    document_title: Optional[str] = None
-    cited_text: Optional[str] = None
-    file_name: Optional[str] = None
+class DocumentCitation(Base):
+    document_title: str = ''
+    cited_text: str = ''
+    file_name: str = ''
 
 
-class Citations(BaseModel):
-    raw: Optional[Any] = None
-    urls: Optional[List[Dict]] = None
-    documents: Optional[List[DocumentCitation]] = None
+class Citations(Base):
+    raw: Any = None
+    urls: List[Dict]
+    documents: List[DocumentCitation]
 
 
-@dataclass
-class MessageMetrics:
+class MessageMetrics(Base):
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    prompt_tokens_details: Optional[dict] = None
-    completion_tokens_details: Optional[dict] = None
-    additional_metrics: Optional[dict] = None
-    time: Optional[float] = None
-    time_to_first_token: Optional[float] = None
-    timer: Optional[Timer] = None
+    prompt_tokens_details: dict
+    completion_tokens_details: dict
+    additional_metrics: dict
+    time = 0.0
+    time_to_first_token = 0.0
+    timer: Timer = None
 
     def start_timer(self):
         if self.timer is None:
@@ -842,33 +805,32 @@ class MessageMetrics:
         return self + other
 
 
-class Message(BaseModel):
+class Message(Base):
     role: Literal['system', 'user', 'assistant', 'tool'] = 'user'
-    content: Optional[Union[List[Any], str]] = None
-    name: Optional[str] = None
-    tool_call_id: Optional[str] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = None
-    audio: Optional[Sequence[Audio]] = None
-    images: Optional[Sequence[Image]] = None
-    videos: Optional[Sequence[Video]] = None
-    files: Optional[Sequence[File]] = None
-    audio_output: Optional[AudioResponse] = None
-    image_output: Optional[ImageArtifact] = None
-    thinking: Optional[str] = None
-    redacted_thinking: Optional[str] = None
-    provider_data: Optional[Dict[str, Any]] = None
-    citations: Optional[Citations] = None
-    reasoning_content: Optional[str] = None
-    tool_name: Optional[str] = None
-    tool_args: Optional[Any] = None
-    tool_call_error: Optional[bool] = None
+    content: Union[List[Any], str] = None
+    name: str = ''
+    tool_call_id: str = ''
+    tool_calls: List[Dict[str, Any]]
+    audio: Sequence[Audio] = None
+    images: Sequence[Image] = None
+    videos: Sequence[Video] = None
+    files: Sequence[File] = None
+    audio_output: AudioResponse = None
+    image_output: ImageArtifact = None
+    thinking: str = ''
+    redacted_thinking: str = ''
+    provider_data: Dict[str, Any]
+    citations: Citations = None
+    reasoning_content: str = ''
+    tool_name: str = ''
+    tool_args: Any = None
+    tool_call_error: bool = False
     stop_after_tool_call: bool = False
     add_to_agent_memory: bool = True
     from_history: bool = False
-    metrics: MessageMetrics = Field(default_factory=MessageMetrics)
-    references: Optional[MessageReferences] = None
-    created_at: int = Field(default_factory=lambda: int(time.time()))
-    model_config = ConfigDict(extra='allow', populate_by_name=True, arbitrary_types_allowed=True)
+    metrics: MessageMetrics
+    references: MessageReferences = None
+    created_at: int = int(time.time())
 
     def get_content_string(self) -> str:
         if isinstance(self.content, str):
@@ -880,7 +842,7 @@ class Message(BaseModel):
                 return json.dumps(self.content)
         return ''
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         message_dict = {'content': self.content, 'reasoning_content': self.reasoning_content, 'from_history': self.from_history, 'stop_after_tool_call': self.stop_after_tool_call, 'role': self.role, 'name': self.name, 'tool_call_id': self.tool_call_id, 'tool_name': self.tool_name, 'tool_args': self.tool_args, 'tool_call_error': self.tool_call_error, 'tool_calls': self.tool_calls, 'thinking': self.thinking, 'redacted_thinking': self.redacted_thinking}
         message_dict = {k: v for k, v in message_dict.items() if v is not None and not (isinstance(v, (list, dict)) and len(v) == 0)}
         if self.images:
@@ -977,30 +939,29 @@ class Message(BaseModel):
         return self.content is not None and len(self.content) > 0
 
 
-@dataclass
-class ModelResponse:
-    role: Optional[str] = None
-    content: Optional[str] = None
-    parsed: Optional[Any] = None
-    audio: Optional[AudioResponse] = None
-    image: Optional[ImageArtifact] = None
-    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+class ModelResponse(Base):
+    role: str = ''
+    content: str = ''
+    parsed: Any = None
+    audio: AudioResponse = None
+    image: ImageArtifact = None
+    tool_calls: List[Dict[str, Any]]
     event: str = ResponseEvent.res.value
-    provider_data: Optional[Dict[str, Any]] = None
-    thinking: Optional[str] = None
-    redacted_thinking: Optional[str] = None
-    reasoning_content: Optional[str] = None
-    citations: Optional[Citations] = None
-    response_usage: Optional[Any] = None
+    provider_data: Dict[str, Any]
+    thinking: str = ''
+    redacted_thinking: str = ''
+    reasoning_content: str = ''
+    citations: Citations = None
+    response_usage: Any = None
     created_at: int = int(time.time())
-    extra: Optional[Dict[str, Any]] = None
+    extra: Dict[str, Any]
 
 
-def get_function_call(name: str, arguments: Optional[str] = None, call_id: Optional[str] = None, functions: Optional[Dict[str, Function]] = None) -> Optional[FunctionCall]:
+def get_function_call(name: str, arguments: str = None, call_id: str = None, functions: Dict[str, Function] = None) -> Optional[FunctionCall]:
     print(f'Getting function {name}')
     if functions is None:
         return None
-    function_to_call: Optional[Function] = None
+    function_to_call: Function = None
     if name in functions:
         function_to_call = functions[name]
     if function_to_call is None:
@@ -1050,7 +1011,7 @@ def get_function_call(name: str, arguments: Optional[str] = None, call_id: Optio
     return function_call
 
 
-def get_function_call_for_tool_call(tool_call: Dict[str, Any], functions: Optional[Dict[str, Function]] = None) -> Optional[FunctionCall]:
+def get_function_call_for_tool_call(tool_call: Dict[str, Any], functions: Dict[str, Function] = None) -> Optional[FunctionCall]:
     if tool_call.get('type') == 'function':
         _tool_call_id = tool_call.get('id')
         _tool_call_function = tool_call.get('function')
@@ -1062,41 +1023,39 @@ def get_function_call_for_tool_call(tool_call: Dict[str, Any], functions: Option
     return None
 
 
-@dataclass
-class MessageData:
-    response_role: Optional[Literal['system', 'user', 'assistant', 'tool']] = None
+class MessageData(Base):
+    response_role: Literal['system', 'user', 'assistant', 'tool'] = 'user'
     response_content: Any = ''
     response_thinking: Any = ''
     response_redacted_thinking: Any = ''
-    response_citations: Optional[Citations] = None
-    response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    response_audio: Optional[AudioResponse] = None
-    response_image: Optional[ImageArtifact] = None
-    response_provider_data: Optional[Dict[str, Any]] = None
-    extra: Optional[Dict[str, Any]] = None
+    response_citations: Citations = None
+    response_tool_calls: List[Dict[str, Any]]
+    response_audio: AudioResponse = None
+    response_image: ImageArtifact = None
+    response_provider_data: Dict[str, Any]
+    extra: Dict[str, Any]
 
 
-@dataclass
-class Model(ABC):
-    id: str
-    name: Optional[str] = None
-    provider: Optional[str] = None
-    response_format: Optional[Any] = None  # 不要直接设置，而是在代理上设置response_model属性
+class Model(Base):
+    id: str = ''
+    name: str = ''
+    provider: str = ''
+    response_format: Any = None  # 不要直接设置，而是在代理上设置response_model属性
     structured_outputs: bool = False
     supports_native_structured_outputs: bool = False
     supports_json_schema_outputs: bool = False
-    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-    show_tool_calls: Optional[bool] = None
-    tool_call_limit: Optional[int] = None
-    _tools: Optional[List[Dict]] = None
-    _functions: Optional[Dict[str, Function]] = None
-    _function_call_stack: Optional[List[FunctionCall]] = None
-    system_prompt: Optional[str] = None
-    instructions: Optional[List[str]] = None
+    tool_choice: Union[str, Dict[str, Any]] = None
+    show_tool_calls: bool = False
+    tool_call_limit: int = 0
+    _tools: List[Dict]
+    _functions: Dict[str, Function]
+    _function_call_stack: List[FunctionCall]
+    system_prompt: str = ''
+    instructions: List[str]
     tool_message_role: str = 'tool'
     assistant_message_role: str = 'assistant'
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         fields = {'name', 'id', 'provider'}
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
         if self._functions:
@@ -1441,7 +1400,7 @@ class Model(ABC):
                 function_calls_to_run.append(_function_call)
         return function_calls_to_run
 
-    def _create_function_call_result(self, fc: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer) -> Message:
+    def _create_function_call_result(self, fc: FunctionCall, success: bool, output: Union[List[Any], str], timer: Timer) -> Message:
         return Message(role=self.tool_message_role, content=output if success else fc.error, tool_call_id=fc.call_id, tool_name=fc.function.name, tool_args=fc.arguments, tool_call_error=not success, stop_after_tool_call=fc.function.stop_after_tool_call, metrics=MessageMetrics(time=timer.elapsed))
 
     def run_function_calls(self, function_calls: List[FunctionCall], function_call_results: List[Message]) -> Iterator[ModelResponse]:
@@ -1460,7 +1419,7 @@ class Model(ABC):
                 function_call_success = False
                 raise e
             function_call_timer.stop()
-            function_call_output: Optional[Union[List[Any], str]] = ''
+            function_call_output: Union[List[Any], str] = ''
             if isinstance(fc.result, (types.GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
                     function_call_output += item
@@ -1508,7 +1467,7 @@ class Model(ABC):
                 print(f'Error during function call: {result}')
                 raise result
             function_call_success, function_call_timer, fc = result
-            function_call_output: Optional[Union[List[Any], str]] = ''
+            function_call_output: Union[List[Any], str] = ''
             if isinstance(fc.result, (types.GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
                     function_call_output += item
@@ -1614,21 +1573,20 @@ class Model(ABC):
         return new_model
 
 
-@dataclass
 class Ollama(Model):
     id: str = 'llama3.1:8b'
     name: str = 'Ollama'
     provider: str = 'Ollama'
     supports_native_structured_outputs: bool = True
-    format: Optional[Any] = None
-    options: Optional[Any] = None
-    keep_alive: Optional[Union[float, str]] = None
-    request_params: Optional[Dict[str, Any]] = None
-    host: Optional[str] = None
-    timeout: Optional[Any] = None
-    client_params: Optional[Dict[str, Any]] = None
-    client: Optional[ollama.Client] = None
-    async_client: Optional[ollama.AsyncClient] = None
+    format: Any = None
+    options: Any = None
+    keep_alive: Union[float, str] = None
+    request_params: Dict[str, Any]
+    host: str = 'http://localhost:11434'
+    timeout: int = 10
+    client_params: Dict[str, Any]
+    client: ollama.Client = None
+    async_client: ollama.AsyncClient = None
 
     def _get_client_params(self) -> Dict[str, Any]:
         base_params = {'host': self.host, 'timeout': self.timeout}
@@ -1638,7 +1596,7 @@ class Ollama(Model):
         return client_params
 
     def get_client(self) -> ollama.Client:
-        if self.client is not None:
+        if self.client:
             return self.client
         self.client = ollama.Client(**self._get_client_params())
         return self.client
@@ -1663,7 +1621,7 @@ class Ollama(Model):
             request_params.update(self.request_params)
         return request_params
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         model_dict = super().to_dict()
         model_dict.update({'format': self.format, 'options': self.options, 'keep_alive': self.keep_alive, 'request_params': self.request_params})
         if self._tools is not None:
@@ -1690,7 +1648,7 @@ class Ollama(Model):
     def _prepare_request_kwargs_for_invoke(self) -> Dict[str, Any]:
         request_kwargs = self.request_kwargs
         if self.response_format is not None and self.structured_outputs:
-            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+            if isinstance(self.response_format, type) and issubclass(self.response_format, Base):
                 print('Using structured outputs')
                 format_schema = self.response_format.model_json_schema()
                 if 'format' not in request_kwargs:
@@ -1699,7 +1657,7 @@ class Ollama(Model):
 
     def invoke(self, messages: List[Message]) -> Mapping[str, Any]:
         request_kwargs = self._prepare_request_kwargs_for_invoke()
-        return self.get_client().chat(model=self.id.strip(), messages=[self._format_message(m) for m in messages], **request_kwargs)
+        return self.get_client().chat(model=self.id.strip(), messages=[self._format_message(m) for m in messages], **{k: v for k, v in request_kwargs.items() if v})
 
     async def ainvoke(self, messages: List[Message]) -> Mapping[str, Any]:
         request_kwargs = self._prepare_request_kwargs_for_invoke()
@@ -1717,7 +1675,7 @@ class Ollama(Model):
         model_response = ModelResponse()
         response_message: ollama._types.OllamaMessage = response.get('message')
         try:
-            if self.response_format is not None and self.structured_outputs and issubclass(self.response_format, BaseModel):
+            if self.response_format is not None and self.structured_outputs and issubclass(self.response_format, Base):
                 parsed_object = response_message.content
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
@@ -1761,7 +1719,7 @@ class Ollama(Model):
 
 
 class ToolCall:
-    def __init__(self, tool_calls: List[Dict[str, Any]] = None, response_usage: Optional[Mapping[str, Any]] = None, response_is_tool_call=False, is_closing_tool_call_tag=False, tool_calls_counter=0, tool_call_content=''):
+    def __init__(self, tool_calls: List[Dict[str, Any]] = None, response_usage: Mapping[str, Any] = None, response_is_tool_call=False, is_closing_tool_call_tag=False, tool_calls_counter=0, tool_call_content=''):
         self.tool_calls = tool_calls or []
         self.response_usage = response_usage
         self.response_is_tool_call = response_is_tool_call
@@ -1815,7 +1773,7 @@ class OllamaTools(Ollama):
                 model_response.response_usage.total_tokens = (model_response.response_usage.input_tokens + model_response.response_usage.output_tokens)
         return model_response
 
-    def _create_function_call_result(self, fc: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer) -> Message:
+    def _create_function_call_result(self, fc: FunctionCall, success: bool, output: Union[List[Any], str], timer: Timer) -> Message:
         content = ('<tool_response>\n'
             + json.dumps({'name': fc.function.name, 'content': output if success else fc.error})
             + '\n</tool_response>')
@@ -1973,21 +1931,21 @@ class RunMessages:
         return [i for i in [self.system_message, self.user_message, *self.extra_messages] if i]
 
 
-class ReasoningStep(BaseModel):
-    title: Optional[str] = Field(None, description='概括步骤目的的简明标题')
-    action: Optional[str] = Field(None, description='此步骤衍生出的操作。用第一人称说话')
-    result: Optional[str] = Field(None, description='执行动作的结果。用第一人称说话')
-    reasoning: Optional[str] = Field(None, description='这一步骤背后的思考过程和考虑因素')
-    over: Optional[bool] = Field(False, description='指示是继续推理、验证提供的结果，还是确认结果是最终答案')
-    confidence: Optional[float] = Field(None, description='此步骤的置信度得分(0.0至1.0)')
+class ReasoningStep(Base):
+    title: str = ''  # '概括步骤目的的简明标题')
+    action: str = ''  # '此步骤衍生出的操作。用第一人称说话')
+    result: str = ''  # '执行动作的结果。用第一人称说话')
+    reasoning: str = ''  # '这一步骤背后的思考过程和考虑因素')
+    over: bool = False  # '指示是继续推理、验证提供的结果，还是确认结果是最终答案')
+    confidence: float = 0.0  # '此步骤的置信度得分(0.0至1.0)')
 
 
-class ReasoningSteps(BaseModel):
-    reasoning_steps: List[ReasoningStep] = Field(..., description='推理步骤列表')
+class ReasoningSteps(Base):
+    reasoning_steps: List[ReasoningStep]  # '推理步骤列表')
 
 
 class RunResponseExtraData:
-    def __init__(self, references: Optional[List[MessageReferences]] = None, add_messages: Optional[List[Message]] = None, reasoning_steps: Optional[List['ReasoningStep']] = None, reasoning_messages: Optional[List[Message]] = None):
+    def __init__(self, references: List[MessageReferences] = None, add_messages: List[Message] = None, reasoning_steps: List['ReasoningStep'] = None, reasoning_messages: List[Message] = None):
         self.references = references or []
         self.add_messages = add_messages or []
         self.reasoning_steps = reasoning_steps or []
@@ -2002,7 +1960,7 @@ class RunResponse:
     def __init__(self, content=None, content_type: str = 'str', thinking: str = None, event: str = RunEvent.run_response.value,
             messages: List[Message] = None, metrics: Dict[str, Any] = None,
             model: str = None, run_id: str = None, agent_id: str = None, session_id: str = None,
-            workflow_id: str = None, tools: Optional[List[Dict[str, Any]]] = None,
+            workflow_id: str = None, tools: List[Dict[str, Any]] = None,
             formatted_tool_calls: List[str] = None, images: List[ImageArtifact] = None,
             videos: List[VideoArtifact] = None, audio: List[AudioArtifact] = None,
             response_audio: AudioResponse = None, citations: Citations = None,
@@ -2036,14 +1994,14 @@ class RunResponse:
                     'videos': [vid.model_dump(exclude_none=True) for vid in self.videos],
                     'audio': [aud.model_dump(exclude_none=True) for aud in self.audio],
                     'response_audio': self.response_audio.to_dict() if isinstance(self.response_audio, AudioResponse) else self.response_audio})
-        if isinstance(self.content, BaseModel):
+        if isinstance(self.content, Base):
             res['content'] = self.content.model_dump(exclude_none=True)
         return {k: v for k, v in res.items() if v}
 
     def get_content_as_string(self, **kwargs) -> str:
         if isinstance(self.content, str):
             return self.content
-        elif isinstance(self.content, BaseModel):
+        elif isinstance(self.content, Base):
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
             return json.dumps(self.content, **kwargs)
@@ -2061,7 +2019,7 @@ class TeamRunResponse(RunResponse):
             res['extra_data'] = self.extra_data.to_dict()
         if self.response_audio is not None:
             res['response_audio'] = self.response_audio.to_dict()
-        if isinstance(self.content, BaseModel):
+        if isinstance(self.content, Base):
             res['content'] = self.content.model_dump(exclude_none=True)
         res.update({'messages': [m.to_dict() for m in self.messages],
                     'images': [img.model_dump(exclude_none=True) for img in self.images],
@@ -2094,7 +2052,7 @@ class TeamRunResponse(RunResponse):
     def get_content_as_string(self, **kwargs) -> str:
         if isinstance(self.content, str):
             return self.content
-        elif isinstance(self.content, BaseModel):
+        elif isinstance(self.content, Base):
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
             return json.dumps(self.content, **kwargs)
@@ -2106,26 +2064,24 @@ class TeamRunResponse(RunResponse):
         self.audio.extend(run_response.audio)
 
 
-class AgentRun(BaseModel):
-    message: Optional[Message] = None
-    messages: Optional[List[Message]] = None
-    response: Optional[RunResponse] = None
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+class AgentRun(Base):
+    message: Message = None
+    messages: List[Message]
+    response: RunResponse = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         response = {'message': self.message.to_dict() if self.message else None, 'messages': [message.to_dict() for message in self.messages] if self.messages else None, 'response': self.response.to_dict() if self.response else None}
         return {k: v for k, v in response.items() if v}
 
 
-class MemoryRow(BaseModel):
+class MemoryRow(Base):
     memory: Dict[str, Any]
-    user_id: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    id: Optional[str] = None
-    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
+    user_id: str = ''
+    created_at: datetime = None
+    updated_at: datetime = None
+    id: str = ''
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         _dict = self.model_dump(exclude={'created_at', 'updated_at'})
         _dict['created_at'] = self.created_at.isoformat() if self.created_at else None
         _dict['updated_at'] = self.updated_at.isoformat() if self.updated_at else None
@@ -2168,7 +2124,7 @@ class MemoryDb:
             result = session.execute(stmt).first()
             return result is not None
 
-    def read_memories(self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None) -> List[MemoryRow]:
+    def read_memories(self, user_id: str = None, limit: int = None, sort: str = None) -> List[MemoryRow]:
         memories: List[MemoryRow] = []
         try:
             with self.Session() as session:
@@ -2238,16 +2194,15 @@ class MemoryDb:
         return True
 
 
-class MemoryManager(BaseModel):
-    model: Optional[Model] = None
-    user_id: Optional[str] = None
-    limit: Optional[int] = None
-    system_prompt: Optional[str] = None
-    db: Optional[MemoryDb] = None
-    input_message: Optional[str] = None
-    _tools_for_model: Optional[List[Dict]] = None
-    _functions_for_model: Optional[Dict[str, Function]] = None
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+class MemoryManager(Base):
+    model: Model = None
+    user_id: str = ''
+    limit: int = 0
+    system_prompt: str = ''
+    db: MemoryDb = None
+    input_message: str = ''
+    _tools_for_model: List[Dict]
+    _functions_for_model: Dict[str, Function]
 
     def update_model(self):
         if self.model is None:
@@ -2330,7 +2285,7 @@ class MemoryManager(BaseModel):
                     + '\n</existing_memories>', ])
         return Message(role='system', content='\n'.join(system_prompt_lines))
 
-    def run(self, message: Optional[str] = None, **kwargs: Any) -> Optional[str]:
+    def run(self, message: str = None, **kwargs: Any) -> Optional[str]:
         print('*********** MemoryManager Start ***********')
         self.update_model()
         messages_for_model: List[Message] = [self.get_system_message()]
@@ -2342,7 +2297,7 @@ class MemoryManager(BaseModel):
         print('*********** MemoryManager End ***********')
         return response.content
 
-    async def arun(self, message: Optional[str] = None, **kwargs: Any) -> Optional[str]:
+    async def arun(self, message: str = None, **kwargs: Any) -> Optional[str]:
         print('*********** Async MemoryManager Start ***********')
         self.update_model()
         messages_for_model: List[Message] = [self.get_system_message()]
@@ -2355,20 +2310,20 @@ class MemoryManager(BaseModel):
         return response.content
 
 
-class Memory(BaseModel):
+class Memory(Base):
     memory: str
-    id: Optional[str] = None
-    topic: Optional[str] = None
-    input: Optional[str] = None
+    id: str
+    topic: str
+    input: str
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         return self.model_dump(exclude_none=True)
 
 
-class MemoryClassifier(BaseModel):
-    model: Optional[Model] = None
-    system_prompt: Optional[str] = None
-    existing_memories: Optional[List[Memory]] = None
+class MemoryClassifier(Base):
+    model: Model = None
+    system_prompt: str
+    existing_memories: List[Memory]
 
     def update_model(self) -> None:
         if self.model is None:
@@ -2391,7 +2346,7 @@ class MemoryClassifier(BaseModel):
                     + '\n</existing_memories>'])
         return Message(role='system', content='\n'.join(system_prompt_lines))
 
-    def run(self, message: Optional[str] = None, **kwargs: Any) -> Optional[str]:
+    def run(self, message: str = None, **kwargs: Any) -> Optional[str]:
         print('*********** MemoryClassifier Start ***********')
         self.update_model()
         messages_for_model: List[Message] = [self.get_system_message()]
@@ -2402,7 +2357,7 @@ class MemoryClassifier(BaseModel):
         print('*********** MemoryClassifier End ***********')
         return response.content
 
-    async def arun(self, message: Optional[str] = None, **kwargs: Any) -> Optional[str]:
+    async def arun(self, message: str = None, **kwargs: Any) -> Optional[str]:
         print('*********** Async MemoryClassifier Start ***********')
         self.update_model()
         messages_for_model: List[Message] = [self.get_system_message()]
@@ -2414,16 +2369,16 @@ class MemoryClassifier(BaseModel):
         return response.content
 
 
-class SessionSummary(BaseModel):
-    summary: str = Field(..., description='会议总结。简明扼要，只关注重要信息。不要编造任何东西。')
-    topics: Optional[List[str]] = Field(None, description='会议讨论的主题')
+class SessionSummary(Base):
+    summary: str  # '会议总结。简明扼要，只关注重要信息。不要编造任何东西。'
+    topics: List[str]  # '会议讨论的主题'
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         return self.model_dump(exclude_none=True)
 
 
-class MemorySummarizer(BaseModel):
-    model: Optional[Model] = Ollama()
+class MemorySummarizer(Base):
+    model: Model = Ollama()
     use_structured_outputs: bool = False
 
     def update_model(self) -> None:
@@ -2563,28 +2518,27 @@ class TeamContext:
         self.text = text
 
 
-class AgentMemory(BaseModel):
-    runs: List[AgentRun] = []
-    messages: List[Message] = []
+class AgentMemory(Base):
+    runs: List[AgentRun]
+    messages: List[Message]
     update_system_message_on_change: bool = False
 
-    summary: Optional[SessionSummary] = None
+    summary: SessionSummary = None
     create_session_summary: bool = False
     update_session_summary_after_run: bool = True
-    summarizer: Optional[MemorySummarizer] = None
+    summarizer: MemorySummarizer = None
 
     create_user_memories: bool = False
     update_user_memories_after_run: bool = True
-    db: Optional[MemoryDb] = None
-    user_id: Optional[str] = None
-    memories: Optional[List[Memory]] = None
-    num_memories: Optional[int] = None
-    classifier: Optional[MemoryClassifier] = None
-    manager: Optional[MemoryManager] = None
+    db: MemoryDb = None
+    user_id: str
+    memories: List[Memory] = None
+    num_memories: int = 0
+    classifier: MemoryClassifier = None
+    manager: MemoryManager = None
     updating_memory: bool = False
-    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         _memory_dict = self.model_dump(exclude_none=True, include={'update_system_message_on_change', 'create_session_summary', 'update_session_summary_after_run', 'create_user_memories', 'update_user_memories_after_run', 'user_id', 'num_memories'})
         if self.summary is not None:
             _memory_dict['summary'] = self.summary.to_dict()
@@ -2620,7 +2574,7 @@ class AgentMemory(BaseModel):
     def get_messages(self) -> List[Dict[str, Any]]:
         return [message.model_dump() for message in self.messages]
 
-    def get_messages_from_last_n_runs(self, last_n: Optional[int] = None, skip_role: Optional[str] = None) -> List[Message]:
+    def get_messages_from_last_n_runs(self, last_n: int = None, skip_role: str = None) -> List[Message]:
         if not self.runs:
             return []
         runs_to_process = self.runs if last_n is None else self.runs[-last_n:]
@@ -2637,7 +2591,7 @@ class AgentMemory(BaseModel):
         print(f'Getting messages from previous runs: {len(messages_from_history)}')
         return messages_from_history
 
-    def get_message_pairs(self, user_role: str = 'user', assistant_role: Optional[List[str]] = None) -> List[Tuple[Message, Message]]:
+    def get_message_pairs(self, user_role: str = 'user', assistant_role: List[str] = None) -> List[Tuple[Message, Message]]:
         if assistant_role is None:
             assistant_role = ['assistant', 'model', 'CHATBOT']
         runs_as_message_pairs: List[Tuple[Message, Message]] = []
@@ -2661,7 +2615,7 @@ class AgentMemory(BaseModel):
                     runs_as_message_pairs.append((user_messages_from_run, assistant_messages_from_run))
         return runs_as_message_pairs
 
-    def get_tool_calls(self, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_tool_calls(self, num_calls: int = None) -> List[Dict[str, Any]]:
         tool_calls = []
         for message in self.messages[::-1]:
             if message.tool_calls:
@@ -2789,38 +2743,22 @@ class AgentMemory(BaseModel):
         return copied_obj
 
 
-class TeamMemory:
-    def __init__(self,
-    runs: List[TeamRun] = None,
-    messages: List[Message] = None,
-    update_system_message_on_change=True,
-    team_context: TeamContext = None,
-    create_user_memories=False,
-    update_user_memories_after_run=True,
-    db: MemoryDb = None,
-    user_id: str = None,
-    memories: List[Memory] = None,
-    num_memories: int = None,
-    classifier: MemoryClassifier = None,
-    manager: MemoryManager = None,
-    updating_memory=False,
-    model_config: dict = None):
-        self.runs = runs or []
-        self.messages = messages or []
-        self.update_system_message_on_change = update_system_message_on_change
-        self.team_context = team_context
-        self.create_user_memories = create_user_memories
-        self.update_user_memories_after_run = update_user_memories_after_run
-        self.db = db
-        self.user_id = user_id
-        self.memories = memories
-        self.classifier = classifier
-        self.manager = manager
-        self.num_memories = num_memories
-        self.updating_memory = updating_memory
-        self.model_config = model_config or {'arbitrary_types_allowed': True}
+class TeamMemory(Base):
+    runs: List[TeamRun]
+    messages: List[Message]
+    update_system_message_on_change = True
+    team_context: TeamContext = None
+    create_user_memories = False
+    update_user_memories_after_run = True
+    db: MemoryDb = None
+    user_id: str = ''
+    memories: List[Memory]
+    num_memories: int = 0
+    classifier: MemoryClassifier = None
+    manager: MemoryManager = None
+    updating_memory = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         _memory_dict = {}
         for key, value in self.__dict__.items():
             if value is not None and key in ['update_system_message_on_change', 'create_user_memories', 'update_user_memories_after_run', 'user_id', 'num_memories']:
@@ -2910,7 +2848,7 @@ class TeamMemory:
     def get_messages(self) -> List[Dict[str, Any]]:
         return [message.model_dump() for message in self.messages]
 
-    def get_messages_from_last_n_runs(self, last_n: Optional[int] = None, skip_role: Optional[str] = None) -> List[Message]:
+    def get_messages_from_last_n_runs(self, last_n: int = None, skip_role: str = None) -> List[Message]:
         if not self.runs:
             return []
         runs_to_process = self.runs if last_n is None else self.runs[-last_n:]
@@ -3041,17 +2979,15 @@ class TeamMemory:
         return copied_obj
 
 
-class WorkflowRun(BaseModel):
-    input: Optional[Dict[str, Any]] = None
-    response: Optional[RunResponse] = None
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+class WorkflowRun(Base):
+    input: Dict[str, Any]
+    response: RunResponse = None
 
 
-class WorkflowMemory(BaseModel):
-    runs: List[WorkflowRun] = []
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+class WorkflowMemory(Base):
+    runs: List[WorkflowRun]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         return self.model_dump(exclude_none=True)
 
     def add_run(self, workflow_run: WorkflowRun) -> None:
@@ -3061,7 +2997,7 @@ class WorkflowMemory(BaseModel):
     def clear(self) -> None:
         self.runs = []
 
-    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> 'WorkflowMemory':
+    def deep_copy(self, *, update: Dict[str, Any] = None) -> 'WorkflowMemory':
         new_memory = self.model_copy(deep=True, update=update)
         new_memory.clear()
         return new_memory
@@ -3324,7 +3260,7 @@ class Knowledge:
 
 
 class AgentSession:
-    def __init__(self, session_id: str, mode: Literal['agent', 'team', 'workflow'] = 'agent',  user_id: Optional[str] = None, team_session_id: Optional[str] = None, memory: Optional[Dict[str, Any]] = None, session_data: Optional[Dict[str, Any]] = None, extra_data: Optional[Dict[str, Any]] = None, created_at: Optional[int] = None, updated_at: Optional[int] = None, agent_id: Optional[str] = None, agent_data: Optional[Dict[str, Any]] = None):
+    def __init__(self, session_id: str, mode: Literal['agent', 'team', 'workflow'] = 'agent',  user_id: str = None, team_session_id: str = None, memory: Dict[str, Any] = None, session_data: Dict[str, Any] = None, extra_data: Dict[str, Any] = None, created_at: int = None, updated_at: int = None, agent_id: str = None, agent_data: Dict[str, Any] = None):
         self.mode = mode
         self.session_id = session_id
         self.user_id = user_id
@@ -3340,14 +3276,14 @@ class AgentSession:
 
 class Storage:
     def __init__(self, table_name: str, schema='ai', db_url: str = None, db_engine: sqlalchemy.engine.Engine = None, auto_upgrade_schema=False):
-        _engine: Optional[sqlalchemy.engine.Engine] = db_engine
+        _engine: sqlalchemy.engine.Engine = db_engine
         if _engine is None and db_url is not None:
             _engine = sqlalchemy.engine.create_engine(db_url, connect_args={'charset': 'utf8mb4'})
         if _engine is None:
             raise ValueError('Must provide either db_url or db_engine')
         self.table_name: str = table_name
-        self.schema: Optional[str] = schema
-        self.db_url: Optional[str] = db_url
+        self.schema: str = schema
+        self.db_url: str = db_url
         self.db_engine: sqlalchemy.engine.Engine = _engine
         self.metadata: sqlalchemy.schema.MetaData = sqlalchemy.schema.MetaData(schema=self.schema)
         self.auto_upgrade_schema: bool = auto_upgrade_schema
@@ -3379,7 +3315,7 @@ class Storage:
             print(f'Creating table: {self.table_name}\n')
             self.table.create(self.db_engine)
 
-    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
+    def read(self, session_id: str, user_id: str = None) -> Optional[AgentSession]:
         with self.Session.begin() as sess:
             stmt = sqlalchemy.sql.expression.select(self.table).where(self.table.c.session_id == session_id)
             if user_id is not None:
@@ -3390,7 +3326,7 @@ class Storage:
             except Exception as e:
                 self.create()
 
-    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[AgentSession]:
+    def get_all_sessions(self, user_id: str = None, entity_id: str = None) -> List[AgentSession]:
         sessions = []
         with self.Session.begin() as sess:
             stmt = sqlalchemy.sql.expression.select(self.table)
@@ -3466,7 +3402,7 @@ class Storage:
                     return None
         return self.read(session_id=session.session_id)
 
-    def delete_session(self, session_id: Optional[str] = None):
+    def delete_session(self, session_id: str = None):
         if session_id is None:
             print('No session_id provided for deletion.')
             return
@@ -3506,22 +3442,22 @@ class Storage:
 class Agent:
     def __init__(self, model: Model = None, name: str = None, agent_id: str = None, introduction: str = None,
                  user_id: str = None, session_id: str = None, session_name: str = None,
-                 session_state: Optional[Dict[str, Any]] = None, context: Optional[Dict[str, Any]] = None, add_context=False,
-                 resolve_context=True, memory: Optional[AgentMemory] = None, add_history_to_messages=False,
-                 num_history_responses: int = None, num_history_runs=3, knowledge: Optional[Knowledge] = None,
-                 add_references=False, retriever: Optional[Callable[..., Optional[List[Dict]]]] = None, references_format: Literal['json', 'yaml'] = 'json',
-                 storage: Optional[Storage] = None, extra_data: Optional[Dict[str, Any]] = None, tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
-                 show_tool_calls=True, tool_call_limit: Optional[int] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None, reasoning=False,
-                 reasoning_model: Optional[Model] = None, reasoning_agent: Optional['Agent'] = None, reasoning_min_steps=1,
+                 session_state: Dict[str, Any] = None, context: Dict[str, Any] = None, add_context=False,
+                 resolve_context=True, memory: AgentMemory = None, add_history_to_messages=False,
+                 num_history_responses: int = None, num_history_runs=3, knowledge: Knowledge = None,
+                 add_references=False, retriever: Callable[..., List[Dict]] = None, references_format: Literal['json', 'yaml'] = 'json',
+                 storage: Storage = None, extra_data: Dict[str, Any] = None, tools: List[Union[Toolkit, Callable, Function, Dict]] = None,
+                 show_tool_calls=True, tool_call_limit: int = None, tool_choice: Union[str, Dict[str, Any]] = None, reasoning=False,
+                 reasoning_model: Model = None, reasoning_agent: 'Agent' = None, reasoning_min_steps=1,
                  reasoning_max_steps=10, read_chat_history=False, search_knowledge=True, update_knowledge=False,
-                 read_tool_call_history=False, system_message: Optional[Union[str, Callable, Message]] = None, system_message_role: str = 'system',
-                 create_default_system_message=True, description: str = None, goal: str = None, instructions: Optional[Union[str, List[str], Callable]] = None,
+                 read_tool_call_history=False, system_message: Union[str, Callable, Message] = None, system_message_role: str = 'system',
+                 create_default_system_message=True, description: str = None, goal: str = None, instructions: Union[str, List[str], Callable] = None,
                  expected_output: str = None, additional_context: str = None, markdown=False, add_name_to_instructions=False,
-                 add_datetime_to_instructions=False, add_state_in_messages=False, add_messages: Optional[List[Union[Dict, Message]]] = None,
-                 user_message: Optional[Union[List, Dict, str, Callable, Message]] = None, user_message_role='user', create_default_user_message=True,
-                 retries=0, delay_between_retries=1, exponential_backoff=False, response_model: Optional[Type[BaseModel]] = None,
+                 add_datetime_to_instructions=False, add_state_in_messages=False, add_messages: List[Union[Dict, Message]] = None,
+                 user_message: Union[List, Dict, str, Callable, Message] = None, user_message_role='user', create_default_user_message=True,
+                 retries=0, delay_between_retries=1, exponential_backoff=False, response_model: Type[Base] = None,
                  parse_response=True, structured_outputs=False, use_json_mode=False, save_response_to_file: str = None,
-                 stream=False, stream_intermediate_steps=False, team: Optional[List['Agent']] = None, team_data: Optional[Dict[str, Any]] = None,
+                 stream=False, stream_intermediate_steps=False, team: List['Agent'] = None, team_data: Dict[str, Any] = None,
                  role: str = None, respond_directly=False, add_transfer_instructions=True, team_response_separator='\n', debug_mode=False,
                  monitoring=False, telemetry=True):
         self.model = model
@@ -3586,7 +3522,7 @@ class Agent:
         self.stream_intermediate_steps = stream_intermediate_steps
         self.team = team
         self.team_data = team_data
-        self.team_session_id: Optional[str] = None
+        self.team_session_id: str = None
         self.role = role
         self.respond_directly = respond_directly
         self.add_transfer_instructions = add_transfer_instructions
@@ -3594,16 +3530,16 @@ class Agent:
         self.debug_mode = debug_mode
         self.monitoring = monitoring
         self.telemetry = telemetry
-        self.run_id: Optional[str] = None
-        self.run_input: Optional[Union[str, List, Dict, Message]] = None
-        self.run_messages: Optional[RunMessages] = None
-        self.run_response: Optional[RunResponse] = None
-        self.images: Optional[List[ImageArtifact]] = None
-        self.audio: Optional[List[AudioArtifact]] = None
-        self.videos: Optional[List[VideoArtifact]] = None
-        self.agent_session: Optional[AgentSession] = None
-        self._tools_for_model: Optional[List[Dict]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
+        self.run_id: str = None
+        self.run_input: Union[str, List, Dict, Message] = None
+        self.run_messages: RunMessages = None
+        self.run_response: RunResponse = None
+        self.images: List[ImageArtifact] = None
+        self.audio: List[AudioArtifact] = None
+        self.videos: List[VideoArtifact] = None
+        self.agent_session: AgentSession = None
+        self._tools_for_model: List[Dict] = None
+        self._functions_for_model: Dict[str, Function] = None
         if (self.reasoning or self.reasoning_model) and not self.reasoning_agent:
             self.reasoning_agent = Agent(model=reasoning_model or self.model.__class__(id=self.model.id),
                               description='你是一个细致、周到、有逻辑的推理代理，通过清晰、结构化、循序渐进的分析来解决复杂的问题',
@@ -3669,7 +3605,7 @@ class Agent:
     def has_team(self) -> bool:
         return self.team is not None and len(self.team) > 0
 
-    def _run(self, message: Optional[Union[str, List, Dict, Message]] = None, *, stream: bool = False, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, messages: Optional[Sequence[Union[Dict, Message]]] = None, stream_intermediate_steps: bool = False, **kwargs: Any) -> Iterator[RunResponse]:
+    def _run(self, message: Union[str, List, Dict, Message] = None, *, stream: bool = False, audio: Sequence[Audio] = None, images: Sequence[Image] = None, videos: Sequence[Video] = None, files: Sequence[File] = None, messages: Sequence[Union[Dict, Message]] = None, stream_intermediate_steps: bool = False, **kwargs: Any) -> Iterator[RunResponse]:
         """运行代理并生成RunResponse。
         步骤：
         1.让代理人做好运行准备
@@ -3869,7 +3805,7 @@ class Agent:
         if not self.stream:
             yield self.run_response
 
-    def run(self, message: Optional[Union[str, List, Dict, Message]] = None, *, stream: Optional[bool] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, messages: Optional[Sequence[Union[Dict, Message]]] = None, stream_intermediate_steps: bool = False, retries: Optional[int] = None, **kwargs: Any) -> Union[RunResponse, Iterator[RunResponse]]:
+    def run(self, message: Union[str, List, Dict, Message] = None, *, stream: bool = None, audio: Sequence[Audio] = None, images: Sequence[Image] = None, videos: Sequence[Video] = None, files: Sequence[File] = None, messages: Sequence[Union[Dict, Message]] = None, stream_intermediate_steps: bool = False, retries: int = None, **kwargs: Any) -> Union[RunResponse, Iterator[RunResponse]]:
         if retries is None:
             retries = self.retries
         if stream is None:
@@ -3912,7 +3848,7 @@ class Agent:
         else:
             raise Exception(f'{num_attempts}次后失败')
 
-    async def _arun(self, message: Optional[Union[str, List, Dict, Message]] = None, *, stream: bool = False, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, messages: Optional[Sequence[Union[Dict, Message]]] = None, stream_intermediate_steps: bool = False, **kwargs: Any) -> AsyncIterator[RunResponse]:
+    async def _arun(self, message: Union[str, List, Dict, Message] = None, *, stream: bool = False, audio: Sequence[Audio] = None, images: Sequence[Image] = None, videos: Sequence[Video] = None, files: Sequence[File] = None, messages: Sequence[Union[Dict, Message]] = None, stream_intermediate_steps: bool = False, **kwargs: Any) -> AsyncIterator[RunResponse]:
         self.initialize_agent()
         self.stream = self.stream or (stream and self.is_streamable)
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
@@ -4103,7 +4039,7 @@ class Agent:
         if not self.stream:
             yield self.run_response
 
-    async def arun(self, message: Optional[Union[str, List, Dict, Message]] = None, *, stream: Optional[bool] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, messages: Optional[Sequence[Union[Dict, Message]]] = None, stream_intermediate_steps: bool = False, retries: Optional[int] = None, **kwargs: Any) -> Any:
+    async def arun(self, message: Union[str, List, Dict, Message] = None, *, stream: bool = None, audio: Sequence[Audio] = None, images: Sequence[Image] = None, videos: Sequence[Video] = None, files: Sequence[File] = None, messages: Sequence[Union[Dict, Message]] = None, stream_intermediate_steps: bool = False, retries: int = None, **kwargs: Any) -> Any:
         if retries is None:
             retries = self.retries
         if stream is None:
@@ -4146,7 +4082,7 @@ class Agent:
         else:
             raise Exception(f'{num_attempts}次后失败')
 
-    def create_run_response(self, content: Optional[Any] = None, *, thinking: Optional[str] = None, redacted_thinking: Optional[str] = None, event: RunEvent = RunEvent.run_response, content_type: Optional[str] = None, created_at: Optional[int] = None, citations: Optional[Citations] = None) -> RunResponse:
+    def create_run_response(self, content: Any = None, *, thinking: str = None, redacted_thinking: str = None, event: RunEvent = RunEvent.run_response, content_type: str = None, created_at: int = None, citations: Citations = None) -> RunResponse:
         thinking_combined = (thinking or '') + (redacted_thinking or '')
         rr = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id, content=content, thinking=thinking_combined if thinking_combined else None, tools=self.run_response.tools, audio=self.run_response.audio, images=self.run_response.images, videos=self.run_response.videos, citations=citations or self.run_response.citations, response_audio=self.run_response.response_audio, model=self.run_response.model, messages=self.run_response.messages, extra_data=self.run_response.extra_data, event=event.value)
         if content_type is not None:
@@ -4455,7 +4391,7 @@ class Agent:
                 json_output_prompt += '\n<json_fields>'
                 json_output_prompt += f'\n{json.dumps(self.response_model)}'
                 json_output_prompt += '\n</json_fields>'
-            elif issubclass(self.response_model, BaseModel):
+            elif issubclass(self.response_model, Base):
                 json_schema = self.response_model.model_json_schema()
                 if json_schema is not None:
                     response_model_properties = {}
@@ -4608,7 +4544,7 @@ class Agent:
             system_message_content += f'{self.get_json_output_prompt()}'
         return Message(role=self.system_message_role, content=system_message_content.strip()) if system_message_content else None
 
-    def get_user_message(self, *, message: Optional[Union[str, List]], audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, **kwargs: Any) -> Optional[Message]:
+    def get_user_message(self, *, message: Union[str, List], audio: Sequence[Audio] = None, images: Sequence[Image] = None, videos: Sequence[Video] = None, files: Sequence[File] = None, **kwargs: Any) -> Optional[Message]:
         references = None
         if self.add_references and message:
             message_str: str
@@ -4660,7 +4596,7 @@ class Agent:
             user_msg_content += '</context>'
         return Message(role=self.user_message_role, content=user_msg_content, audio=audio, images=images, videos=videos, files=files, **kwargs)
 
-    def get_run_messages(self, *, message: Optional[Union[str, List, Dict, Message]] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, messages: Optional[Sequence[Union[Dict, Message]]] = None, **kwargs: Any) -> RunMessages:
+    def get_run_messages(self, *, message: Union[str, List, Dict, Message] = None, audio: Sequence[Audio] = None, images: Sequence[Image] = None, videos: Sequence[Video] = None, files: Sequence[File] = None, messages: Sequence[Union[Dict, Message]] = None, **kwargs: Any) -> RunMessages:
         """此函数返回具有以下属性的RunMessages对象：
         -system_message：此运行的系统消息
         -user_message：此运行的用户消息
@@ -4718,7 +4654,7 @@ class Agent:
                     _msg.from_history = True
                 print(f'Adding {len(history_copy)} messages from history')
                 run_messages.messages += history_copy
-        user_message: Optional[Message] = None
+        user_message: Message = None
         if message is None or isinstance(message, str) or isinstance(message, list):
             user_message = self.get_user_message(message=message, audio=audio, images=images, videos=videos, files=files, **kwargs)
         elif isinstance(message, Message):
@@ -4749,7 +4685,7 @@ class Agent:
         return run_messages
 
     def get_transfer_function(self, member_agent: 'Agent', index: int) -> Function:
-        def _transfer_task_to_agent(task_description: str, expected_output: str, additional_information: Optional[str] = None) -> Iterator[str]:
+        def _transfer_task_to_agent(task_description: str, expected_output: str, additional_information: str = None) -> Iterator[str]:
             if member_agent.team_data is None:
                 member_agent.team_data = {}
             member_agent.team_data['leader_session_id'] = self.session_id
@@ -4781,7 +4717,7 @@ class Agent:
                     yield 'No response from the member agent.'
                 elif isinstance(member_agent_run_response.content, str):
                     yield member_agent_run_response.content
-                elif issubclass(type(member_agent_run_response.content), BaseModel):
+                elif issubclass(type(member_agent_run_response.content), Base):
                     try:
                         yield member_agent_run_response.content.model_dump_json(indent=2)
                     except Exception as e:
@@ -4835,7 +4771,7 @@ class Agent:
             return transfer_instructions
         return ''
 
-    def get_relevant_docs_from_knowledge(self, query: str, num_documents: Optional[int] = None, **kwargs) -> Optional[List[Dict[str, Any]]]:
+    def get_relevant_docs_from_knowledge(self, query: str, num_documents: int = None, **kwargs) -> Optional[List[Dict[str, Any]]]:
         if self.retriever is not None and callable(self.retriever):
             try:
                 sig = inspect.signature(self.retriever)
@@ -4854,7 +4790,7 @@ class Agent:
             return None
         return [doc.to_dict() for doc in relevant_docs]
     
-    async def aget_relevant_docs_from_knowledge(self, query: str, num_documents: Optional[int] = None, **kwargs) -> Optional[List[Dict[str, Any]]]:
+    async def aget_relevant_docs_from_knowledge(self, query: str, num_documents: int = None, **kwargs) -> Optional[List[Dict[str, Any]]]:
         if self.retriever is not None and callable(self.retriever):
             try:
                 sig = inspect.signature(self.retriever)
@@ -4900,7 +4836,7 @@ class Agent:
                 print(f'未能将经过净化的上下文转换为JSON: {e}')
                 return str(context)
 
-    def save_run_response_to_file(self, message: Optional[Union[str, List, Dict, Message]] = None) -> None:
+    def save_run_response_to_file(self, message: Union[str, List, Dict, Message] = None) -> None:
         if self.save_response_to_file is not None and self.run_response is not None:
             message_str = None
             if message is not None:
@@ -5057,7 +4993,7 @@ class Agent:
         self.update_run_response_with_reasoning(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)], reasoning_agent_messages=[ds_reasoning_message])
         if self.stream_intermediate_steps:
             yield self.create_run_response(content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)]), event=RunEvent.reasoning_completed)
-        reasoning_agent: Optional[Agent] = self.reasoning_agent
+        reasoning_agent: Agent = self.reasoning_agent
         reasoning_agent.show_tool_calls = False
         reasoning_agent.model.show_tool_calls = False
         step_count = 1
@@ -5121,7 +5057,7 @@ class Agent:
         self.update_run_response_with_reasoning(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)], reasoning_agent_messages=[ds_reasoning_message])
         if self.stream_intermediate_steps:
             yield self.create_run_response(content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)]), event=RunEvent.reasoning_completed)
-        reasoning_agent: Optional[Agent] = self.reasoning_agent
+        reasoning_agent: Agent = self.reasoning_agent
         reasoning_agent.show_tool_calls = False
         reasoning_agent.model.show_tool_calls = False
         step_count = 1
@@ -5166,7 +5102,7 @@ class Agent:
         if self.stream_intermediate_steps:
             yield self.create_run_response(content=ReasoningSteps(reasoning_steps=all_reasoning_steps), content_type=ReasoningSteps.__class__.__name__, event=RunEvent.reasoning_completed)
 
-    def get_chat_history(self, num_chats: Optional[int] = None) -> str:
+    def get_chat_history(self, num_chats: int = None) -> str:
         history: List[Dict[str, Any]] = []
         all_chats = self.memory.get_message_pairs()
         if len(all_chats) == 0:
@@ -5260,7 +5196,7 @@ class Agent:
             run_data.update({'run_input': self.run_input, 'run_response': self.run_response.to_dict(), 'run_response_format': run_response_format})
         return run_data
 
-    def print_response(self, message: Optional[Union[List, Dict, str, Message]] = None, *, messages: Optional[List[Union[Dict, Message]]] = None, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, stream: bool = False, markdown: bool = False, show_message: bool = True, show_reasoning: bool = True, show_full_reasoning: bool = False, console: Optional[Any] = None, tags_to_include_in_markdown: Set[str] = {'think', 'thinking'}, **kwargs: Any) -> None:
+    def print_response(self, message: Union[List, Dict, str, Message] = None, *, messages: List[Union[Dict, Message]] = None, audio: Sequence[Audio] = None, images: Sequence[Image] = None, videos: Sequence[Video] = None, files: Sequence[File] = None, stream: bool = False, markdown: bool = False, show_message: bool = True, show_reasoning: bool = True, show_full_reasoning: bool = False, console: Any = None, tags_to_include_in_markdown: Set[str] = {'think', 'thinking'}, **kwargs: Any) -> None:
         if markdown:
             self.markdown = True
         if self.response_model is not None:
@@ -5320,7 +5256,7 @@ class Agent:
                         response_content_batch = Markdown(escaped_content)
                     else:
                         response_content_batch = run_response.get_content_as_string(indent=4)
-                elif self.response_model is not None and isinstance(run_response.content, BaseModel):
+                elif self.response_model is not None and isinstance(run_response.content, Base):
                     try:
                         response_content_batch = JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
                     except Exception as e:
@@ -5343,7 +5279,7 @@ class Agent:
             panels = [p for p in panels if not isinstance(p, Status)]
             live_log.update(Group(*panels))
 
-    def cli_app(self, message: Optional[str] = None, user: str = 'User', emoji: str = ':sunglasses:', stream: bool = False, markdown: bool = False, exit_on: Optional[List[str]] = None, **kwargs: Any) -> None:
+    def cli_app(self, message: str = None, user: str = 'User', emoji: str = ':sunglasses:', stream: bool = False, markdown: bool = False, exit_on: List[str] = None, **kwargs: Any) -> None:
         if message:
             self.print_response(message=message, stream=stream, markdown=markdown, **kwargs)
         _exit_on = exit_on or ['exit', 'quit', 'bye']
@@ -5357,23 +5293,23 @@ class Agent:
 class Team:
     def __init__(self, members: List[Union[Agent, 'Team']],
                  mode: Literal['route', 'coordinate', 'collaborate'] = 'coordinate',
-                 model: Optional[Model] = None, name: str = None, team_id: str = None, user_id: str = None,
-                 session_id: str = None, session_name: str = None, session_state: Optional[Dict[str, Any]] = None,
+                 model: Model = None, name: str = None, team_id: str = None, user_id: str = None,
+                 session_id: str = None, session_name: str = None, session_state: Dict[str, Any] = None,
                  add_state_in_messages=False, description: str = None,
-                 instructions: Optional[Union[str, List[str], Callable]] = None,
+                 instructions: Union[str, List[str], Callable] = None,
                  expected_output: str = None, success_criteria: str = None, markdown=False,
                  add_datetime_to_instructions=False,
-                 context: Optional[Dict[str, Any]] = None, add_context=False, enable_agentic_context=False,
+                 context: Dict[str, Any] = None, add_context=False, enable_agentic_context=False,
                  share_member_interactions=False,
-                 read_team_history=False, tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
+                 read_team_history=False, tools: List[Union[Toolkit, Callable, Function, Dict]] = None,
                  show_tool_calls=True,
-                 tool_call_limit: int = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-                 response_model: Optional[Type[BaseModel]] = None,
-                 use_json_mode=False, parse_response=True, memory: Optional[TeamMemory] = None,
+                 tool_call_limit: int = None, tool_choice: Union[str, Dict[str, Any]] = None,
+                 response_model: Type[Base] = None,
+                 use_json_mode=False, parse_response=True, memory: TeamMemory = None,
                  enable_team_history=False,
                  num_of_interactions_from_history=3, storage: Storage = None,
-                 extra_data: Optional[Dict[str, Any]] = None, reasoning=False,
-                 reasoning_model: Optional[Model] = None, reasoning_min_steps=1, reasoning_max_steps=10,
+                 extra_data: Dict[str, Any] = None, reasoning=False,
+                 reasoning_model: Model = None, reasoning_min_steps=1, reasoning_max_steps=10,
                  debug_mode=False,
                  show_members_responses=False, monitoring=False, telemetry=True, role: str = None,
                  team_session_id: str = None):
@@ -5420,17 +5356,17 @@ class Team:
         self.show_members_responses = show_members_responses
         self.monitoring = monitoring
         self.telemetry = telemetry
-        self.run_id: Optional[str] = None
-        self.run_input: Optional[Union[str, List, Dict]] = None
-        self.run_messages: Optional[RunMessages] = None
-        self.run_response: Optional[TeamRunResponse] = None
-        self.images: Optional[List[ImageArtifact]] = None
-        self.audio: Optional[List[AudioArtifact]] = None
-        self.videos: Optional[List[VideoArtifact]] = None
-        self.team_session: Optional[AgentSession] = None
-        self._tools_for_model: Optional[List[Dict]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
-        self._member_response_model: Optional[Type[BaseModel]] = None
+        self.run_id: str = None
+        self.run_input: Union[str, List, Dict] = None
+        self.run_messages: RunMessages = None
+        self.run_response: TeamRunResponse = None
+        self.images: List[ImageArtifact] = None
+        self.audio: List[AudioArtifact] = None
+        self.videos: List[VideoArtifact] = None
+        self.team_session: AgentSession = None
+        self._tools_for_model: List[Dict] = None
+        self._functions_for_model: Dict[str, Function] = None
+        self._member_response_model: Type[Base] = None
         self.reasoning_agent = None
         if (self.reasoning or self.reasoning_model) and not self.reasoning_agent:
             self.reasoning_agent = Agent(model=reasoning_model or self.model.__class__(id=self.model.id),
@@ -5503,9 +5439,9 @@ class Team:
             self._initialize_member(member)
 
     def run(self, message: Union[str, List, Dict, Message], *, stream: bool = False,
-            stream_intermediate_steps: bool = False, retries=3, audio: Optional[Sequence[Audio]] = None,
-            images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None,
-            files: Optional[Sequence[File]] = None, **kwargs: Any) -> Union[TeamRunResponse, Iterator[TeamRunResponse]]:
+            stream_intermediate_steps: bool = False, retries=3, audio: Sequence[Audio] = None,
+            images: Sequence[Image] = None, videos: Sequence[Video] = None,
+            files: Sequence[File] = None, **kwargs: Any) -> Union[TeamRunResponse, Iterator[TeamRunResponse]]:
         self._initialize_team()
         show_tool_calls = self.show_tool_calls
         self.read_from_storage()
@@ -5794,9 +5730,9 @@ class Team:
         print(f'Team Run End: {self.run_id}')
 
     async def arun(self, message: Union[str, List, Dict, Message], *, stream: bool = False,
-                   stream_intermediate_steps: bool = False, retries: Optional[int] = None,
-                   audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None,
-                   videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None, **kwargs: Any) -> \
+                   stream_intermediate_steps: bool = False, retries: int = None,
+                   audio: Sequence[Audio] = None, images: Sequence[Image] = None,
+                   videos: Sequence[Video] = None, files: Sequence[File] = None, **kwargs: Any) -> \
     Union[TeamRunResponse, AsyncIterator[TeamRunResponse]]:
         self._initialize_team()
         retries = retries or 3
@@ -6096,12 +6032,12 @@ class Team:
             yield self._create_run_response(from_run_response=run_response, event=RunEvent.run_completed)
         print(f'Team Run End: {self.run_id}')
 
-    def print_response(self, message: Optional[Union[List, Dict, str, Message]] = None, *, stream: bool = False,
+    def print_response(self, message: Union[List, Dict, str, Message] = None, *, stream: bool = False,
                        stream_intermediate_steps: bool = False, show_message: bool = True, show_reasoning: bool = True,
-                       show_reasoning_verbose: bool = False, console: Optional[Any] = None,
-                       tags_to_include_in_markdown: Optional[Set[str]] = None, audio: Optional[Sequence[Audio]] = None,
-                       images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None,
-                       files: Optional[Sequence[File]] = None, markdown: Optional[bool] = None, **kwargs: Any) -> None:
+                       show_reasoning_verbose: bool = False, console: Any = None,
+                       tags_to_include_in_markdown: Set[str] = None, audio: Sequence[Audio] = None,
+                       images: Sequence[Image] = None, videos: Sequence[Video] = None,
+                       files: Sequence[File] = None, markdown: bool = None, **kwargs: Any) -> None:
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {'think', 'thinking'}
         if markdown is None:
@@ -6284,7 +6220,7 @@ class Team:
                 return Markdown(escaped_content)
             else:
                 return run_response.get_content_as_string(indent=4)
-        elif isinstance(run_response.content, BaseModel):
+        elif isinstance(run_response.content, Base):
             try:
                 return JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
             except Exception as e:
@@ -6295,8 +6231,8 @@ class Team:
             except Exception as e:
                 print(f'Failed to convert response to JSON: {e}')
 
-    def cli_app(self, message: Optional[str] = None, user: str = 'User', emoji: str = ':sunglasses:',
-                stream: bool = False, markdown: bool = False, exit_on: Optional[List[str]] = None,
+    def cli_app(self, message: str = None, user: str = 'User', emoji: str = ':sunglasses:',
+                stream: bool = False, markdown: bool = False, exit_on: List[str] = None,
                 **kwargs: Any) -> None:
         if message:
             self.print_response(message=message, stream=stream, markdown=markdown, **kwargs)
@@ -6382,14 +6318,14 @@ class Team:
                 content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
                 content_type=ReasoningSteps.__class__.__name__, event=RunEvent.reasoning_completed)
 
-    def _create_run_response(self, content: Optional[Any] = None, content_type: Optional[str] = None,
-                             thinking: Optional[str] = None, event: RunEvent = RunEvent.run_response,
-                             tools: Optional[List[Dict[str, Any]]] = None, audio: Optional[List[AudioArtifact]] = None,
-                             images: Optional[List[ImageArtifact]] = None, videos: Optional[List[VideoArtifact]] = None,
-                             response_audio: Optional[AudioResponse] = None, citations: Optional[Citations] = None,
-                             model: Optional[str] = None, messages: Optional[List[Message]] = None,
-                             created_at: Optional[int] = None,
-                             from_run_response: Optional[TeamRunResponse] = None) -> TeamRunResponse:
+    def _create_run_response(self, content: Any = None, content_type: str = None,
+                             thinking: str = None, event: RunEvent = RunEvent.run_response,
+                             tools: List[Dict[str, Any]] = None, audio: List[AudioArtifact] = None,
+                             images: List[ImageArtifact] = None, videos: List[VideoArtifact] = None,
+                             response_audio: AudioResponse = None, citations: Citations = None,
+                             model: str = None, messages: List[Message] = None,
+                             created_at: int = None,
+                             from_run_response: TeamRunResponse = None) -> TeamRunResponse:
         extra_data = None
         member_responses = None
         formatted_tool_calls = None
@@ -6555,9 +6491,8 @@ class Team:
                         system_message_content += f'{indent * " "}    - {_tool_name}: {_tool_description}\n'
         return system_message_content
 
-    def get_system_message(self, audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None,
-                           videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None) -> \
-    Optional[Message]:
+    def get_system_message(self, audio: Sequence[Audio] = None, images: Sequence[Image] = None,
+                           videos: Sequence[Video] = None, files: Sequence[File] = None) -> Optional[Message]:
         instructions: List[str] = []
         if self.instructions is not None:
             _instructions = self.instructions
@@ -6577,25 +6512,25 @@ class Team:
             additional_information.append(f'The current time is {datetime.now()}')
         system_message_content: str = ''
         if self.mode == 'coordinate':
-            system_message_content += 'You are the leader of a team of AI Agents and possible Sub-Teams:\n'
+            system_message_content += '您是AI代理团队和可能的子团队的领导者:\n'
             system_message_content += self.get_members_system_message_content()
             system_message_content += (
                 '''\n-您可以直接响应，也可以将任务转移给团队中的其他代理，具体取决于他们可用的工具及其角色。\n-如果将任务转移给另一个代理，请确保包括：\n-agent_name（str）：要将任务传输到的代理的名称。\n-task_description（str）：任务的清晰描述。\n-expected_output（str）：预期输出。\n-您可以同时将任务传递给多个成员。\n-在响应用户之前，您必须始终验证其他代理的输出。\n-评估其他代理人的反应。如果你觉得任务已经完成，你可以停下来回应用户。\n如果你对结果不满意，可以重新分配任务。\n''')
         elif self.mode == 'route':
-            system_message_content += 'You are the leader of a team of AI Agents and possible Sub-Teams:\n'
+            system_message_content += '您是AI代理团队和可能的子团队的领导者:\n'
             system_message_content += self.get_members_system_message_content()
             system_message_content += '-您充当用户请求的路由器。您必须选择正确的代理来转发用户的请求。这应该是完成任务可能性最高的代理。\n-将任务转发给另一个代理时，请确保包括：\n-agent_name（str）：要将任务传输到的代理的名称。\n-expected_output（str）：预期输出。\n你应该尽最大努力把任务交给一个代理人。\n-如果用户请求需要它（例如，如果他们要求多个东西），您可以一次转发给多个代理。\n'
         elif self.mode == 'collaborate':
-            system_message_content += 'You are leading a collaborative team of Agents and possible Sub-Teams:\n'
+            system_message_content += '您正在领导一个由代理和可能的子团队组成的协作团队:\n'
             system_message_content += self.get_members_system_message_content()
             system_message_content += '-对于团队中的所有代理，只调用run_member_agent一次。\n-考虑其他代理的所有回复，并评估任务是否已完成。\n如果你觉得任务已经完成，你可以停下来回应用户。\n'
             system_message_content += '\n'
         if self.enable_agentic_context:
-            system_message_content += 'You can and should update the context of the team. Use the `set_team_context` tool to update the shared team context.\n'
+            system_message_content += '你可以而且应该更新团队的背景。使用`set_team_text`工具更新共享团队上下文.\n'
         if self.name is not None:
-            system_message_content += f'Your name is: {self.name}.\n\n'
+            system_message_content += f'你是: {self.name}.\n\n'
         if self.success_criteria:
-            system_message_content += f'<success_criteria>\nThe team will be considered successful if the following criteria are met: {self.success_criteria}\nStop the team run when the criteria are met.\n</success_criteria>\n\n'
+            system_message_content += f'<success_criteria>\n如果满足以下标准，该团队将被视为成功: {self.success_criteria}\n满足条件后停止团队运行.\n</success_criteria>\n\n'
         if self.description is not None:
             system_message_content += f'<description>\n{self.description}\n</description>\n\n'
         if len(instructions) > 0:
@@ -6635,8 +6570,8 @@ class Team:
         return Message(role='system', content=system_message_content.strip())
 
     def get_run_messages(self, *, run_response: TeamRunResponse, message: Union[str, List, Dict, Message],
-                         audio: Optional[Sequence[Audio]] = None, images: Optional[Sequence[Image]] = None,
-                         videos: Optional[Sequence[Video]] = None, files: Optional[Sequence[File]] = None,
+                         audio: Sequence[Audio] = None, images: Sequence[Image] = None,
+                         videos: Sequence[Video] = None, files: Sequence[File] = None,
                          **kwargs: Any) -> RunMessages:
         """此函数返回具有以下属性的RunMessages对象：
         -system_message：此运行的系统消息
@@ -6667,9 +6602,9 @@ class Team:
             run_messages.messages.append(user_message)
         return run_messages
 
-    def _get_user_message(self, message: Union[str, List, Dict, Message], audio: Optional[Sequence[Audio]] = None,
-                          images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None,
-                          files: Optional[Sequence[File]] = None, **kwargs):
+    def _get_user_message(self, message: Union[str, List, Dict, Message], audio: Sequence[Audio] = None,
+                          images: Sequence[Image] = None, videos: Sequence[Video] = None,
+                          files: Sequence[File] = None, **kwargs):
         user_message_content: str = ''
         if isinstance(message, str) or isinstance(message, list):
             if self.add_state_in_messages:
@@ -6734,7 +6669,7 @@ class Team:
                 json_output_prompt += '\n<json_fields>'
                 json_output_prompt += f'\n{json.dumps(self.response_model)}'
                 json_output_prompt += '\n</json_fields>'
-            elif issubclass(self.response_model, BaseModel):
+            elif issubclass(self.response_model, Base):
                 json_schema = self.response_model.model_json_schema()
                 if json_schema is not None:
                     response_model_properties = {}
@@ -6791,7 +6726,7 @@ class Team:
                 self.audio = []
             self.audio.extend(run_response.audio)
 
-    def get_team_history(self, num_chats: Optional[int] = None) -> str:
+    def get_team_history(self, num_chats: int = None) -> str:
         history: List[Dict[str, Any]] = []
         all_chats = self.memory.get_all_messages()
         if len(all_chats) == 0:
@@ -6815,9 +6750,9 @@ class Team:
         return msg
 
     def get_run_member_agents_function(self, stream: bool = False, async_mode: bool = False,
-                                       images: Optional[List[Image]] = None, videos: Optional[List[Video]] = None,
-                                       audio: Optional[List[Audio]] = None,
-                                       files: Optional[List[File]] = None) -> Function:
+                                       images: List[Image] = None, videos: List[Video] = None,
+                                       audio: List[Audio] = None,
+                                       files: List[File] = None) -> Function:
         if not images:
             images = []
         if not videos:
@@ -6827,7 +6762,7 @@ class Team:
         if not files:
             files = []
 
-        def run_member_agents(task_description: str, expected_output: Optional[str] = None) -> Iterator[str]:
+        def run_member_agents(task_description: str, expected_output: str = None) -> Iterator[str]:
             team_context_str = None
             if self.enable_agentic_context:
                 team_context_str = self.memory.get_team_context_str()
@@ -6840,7 +6775,7 @@ class Team:
                     videos.extend([Video.from_artifact(vid) for vid in context_videos])
                 if context_audio := self.memory.get_team_context_audio():
                     audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            member_agent_task = 'You are a member of a team of agents that collaborate to complete a task.'
+            member_agent_task = '您是协作完成任务的代理团队的成员.'
             if expected_output is not None:
                 member_agent_task += f'\n\n<expected_output>\n{expected_output}\n</expected_output>'
             if team_context_str:
@@ -6863,7 +6798,7 @@ class Team:
                         yield 'No response from the member agent.'
                     elif isinstance(member_agent_run_response.content, str):
                         yield member_agent_run_response.content
-                    elif issubclass(type(member_agent_run_response.content), BaseModel):
+                    elif issubclass(type(member_agent_run_response.content), Base):
                         try:
                             yield member_agent_run_response.content.model_dump_json(indent=2)
                         except Exception as e:
@@ -6879,7 +6814,7 @@ class Team:
                 self.run_response.add_member_run(member_agent.run_response)
                 self._update_team_state(member_agent.run_response)
 
-        async def arun_member_agents(task_description: str, expected_output: Optional[str] = None) -> AsyncIterator[
+        async def arun_member_agents(task_description: str, expected_output: str = None) -> AsyncIterator[
             str]:
             team_context_str = None
             if self.enable_agentic_context:
@@ -6893,7 +6828,7 @@ class Team:
                     videos.extend([Video.from_artifact(vid) for vid in context_videos])
                 if context_audio := self.memory.get_team_context_audio():
                     audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            member_agent_task = 'You are a member of a team of agents that collaborate to complete a task.'
+            member_agent_task = '您是协作完成任务的代理团队的成员.'
             if expected_output is not None:
                 member_agent_task += f'\n\n<expected_output>\n{expected_output}\n</expected_output>'
             if team_context_str:
@@ -6919,7 +6854,7 @@ class Team:
                         return f'Agent {member_name}: No response from the member agent.'
                     elif isinstance(response.content, str):
                         return f'Agent {member_name}: {response.content}'
-                    elif issubclass(type(response.content), BaseModel):
+                    elif issubclass(type(response.content), Base):
                         try:
                             return f'Agent {member_name}: {response.content.model_dump_json(indent=2)}'
                         except Exception as e:
@@ -6943,8 +6878,8 @@ class Team:
         return run_member_agents_func
 
     def get_transfer_task_function(self, stream: bool = False, async_mode: bool = False,
-                                   images: Optional[List[Image]] = None, videos: Optional[List[Video]] = None,
-                                   audio: Optional[List[Audio]] = None, files: Optional[List[File]] = None) -> Function:
+                                   images: List[Image] = None, videos: List[Video] = None,
+                                   audio: List[Audio] = None, files: List[File] = None) -> Function:
         if not images:
             images = []
         if not videos:
@@ -6973,7 +6908,7 @@ class Team:
                     videos.extend([Video.from_artifact(vid) for vid in context_videos])
                 if context_audio := self.memory.get_team_context_audio():
                     audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            member_agent_task = f'You are a member of a team of agents. Your goal is to complete the following task:\n\n{task_description}\n\n<expected_output>\n{expected_output}\n</expected_output>'
+            member_agent_task = f'你是一个特工团队的成员。你的目标是完成以下任务:\n\n{task_description}\n\n<expected_output>\n{expected_output}\n</expected_output>'
             if team_context_str:
                 member_agent_task += f'\n\n{team_context_str}'
             if team_member_interactions_str:
@@ -6992,7 +6927,7 @@ class Team:
                     yield 'No response from the member agent.'
                 elif isinstance(member_agent_run_response.content, str):
                     yield member_agent_run_response.content
-                elif issubclass(type(member_agent_run_response.content), BaseModel):
+                elif issubclass(type(member_agent_run_response.content), Base):
                     try:
                         yield member_agent_run_response.content.model_dump_json(indent=2)
                     except Exception as e:
@@ -7028,7 +6963,7 @@ class Team:
                     videos.extend([Video.from_artifact(vid) for vid in context_videos])
                 if context_audio := self.memory.get_team_context_audio():
                     audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            member_agent_task = f'You are a member of a team of agents. Your goal is to complete the following task:\n\n{task_description}\n\n<expected_output>\n{expected_output}\n</expected_output>'
+            member_agent_task = f'你是一个特工团队的成员。你的目标是完成以下任务:\n\n{task_description}\n\n<expected_output>\n{expected_output}\n</expected_output>'
             if team_context_str:
                 member_agent_task += f'\n\n{team_context_str}'
             if team_member_interactions_str:
@@ -7048,7 +6983,7 @@ class Team:
                     yield 'No response from the member agent.'
                 elif isinstance(member_agent_run_response.content, str):
                     yield member_agent_run_response.content
-                elif issubclass(type(member_agent_run_response.content), BaseModel):
+                elif issubclass(type(member_agent_run_response.content), Base):
                     try:
                         yield member_agent_run_response.content.model_dump_json(indent=2)
                     except Exception as e:
@@ -7082,9 +7017,9 @@ class Team:
         return None
 
     def get_forward_task_function(self, message: Message, stream: bool = False, async_mode: bool = False,
-                                  images: Optional[Sequence[Image]] = None, videos: Optional[Sequence[Video]] = None,
-                                  audio: Optional[Sequence[Audio]] = None,
-                                  files: Optional[Sequence[File]] = None) -> Function:
+                                  images: Sequence[Image] = None, videos: Sequence[Video] = None,
+                                  audio: Sequence[Audio] = None,
+                                  files: Sequence[File] = None) -> Function:
         if not images:
             images = []
         if not videos:
@@ -7094,7 +7029,7 @@ class Team:
         if not files:
             files = []
 
-        def forward_task_to_member(agent_name: str, expected_output: Optional[str] = None) -> Iterator[str]:
+        def forward_task_to_member(agent_name: str, expected_output: str = None) -> Iterator[str]:
             self._member_response_model = None
             result = self._find_member_by_name(agent_name)
             if result is None:
@@ -7119,7 +7054,7 @@ class Team:
                     yield 'No response from the member agent.'
                 elif isinstance(member_agent_run_response.content, str):
                     yield member_agent_run_response.content
-                elif issubclass(type(member_agent_run_response.content), BaseModel):
+                elif issubclass(type(member_agent_run_response.content), Base):
                     try:
                         yield member_agent_run_response.content.model_dump_json(indent=2)
                     except Exception as e:
@@ -7135,7 +7070,7 @@ class Team:
             self.run_response.add_member_run(member_agent.run_response)
             self._update_team_state(member_agent.run_response)
 
-        async def aforward_task_to_member(agent_name: str, expected_output: Optional[str] = None) -> AsyncIterator[str]:
+        async def aforward_task_to_member(agent_name: str, expected_output: str = None) -> AsyncIterator[str]:
             self._member_response_model = None
             result = self._find_member_by_name(agent_name)
             if result is None:
@@ -7162,7 +7097,7 @@ class Team:
                     yield 'No response from the member agent.'
                 elif isinstance(member_agent_run_response.content, str):
                     yield member_agent_run_response.content
-                elif issubclass(type(member_agent_run_response.content), BaseModel):
+                elif issubclass(type(member_agent_run_response.content), Base):
                     try:
                         yield member_agent_run_response.content.model_dump_json(indent=2)
                     except Exception as e:
@@ -7366,7 +7301,7 @@ class Team:
 
 class Workflow:
     """工作流"""
-    def __init__(self, name: Optional[str] = None, workflow_id: Optional[str] = None, description: Optional[str] = None, user_id: Optional[str] = None, session_id: Optional[str] = None, session_name: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None, memory: Optional[WorkflowMemory] = None, extra_data: Optional[Dict[str, Any]] = None, debug_mode: bool = False, monitoring: bool = False, telemetry: bool = True):
+    def __init__(self, name: str = None, workflow_id: str = None, description: str = None, user_id: str = None, session_id: str = None, session_name: str = None, session_state: Dict[str, Any] = None, memory: WorkflowMemory = None, extra_data: Dict[str, Any] = None, debug_mode: bool = False, monitoring: bool = False, telemetry: bool = True):
         self.name = name or self.__class__.__name__
         self.workflow_id = workflow_id
         self.description = description or self.__class__.__doc__
@@ -7385,10 +7320,10 @@ class Workflow:
         self.images = None
         self.videos = None
         self.audio = None
-        self.workflow_session: Optional[AgentSession] = None
-        self._subclass_run: Optional[Callable] = None
-        self._run_parameters: Optional[Dict[str, Any]] = None
-        self._run_return_type: Optional[str] = None
+        self.workflow_session: AgentSession = None
+        self._subclass_run: Callable = None
+        self._run_parameters: Dict[str, Any] = None
+        self._run_return_type: str = None
         self.update_run_method()
         for field_name, value in self.__class__.__dict__.items():
             if isinstance(value, Agent):
@@ -7652,7 +7587,7 @@ def format_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[str]:
     return formatted_tool_calls
 
 
-def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
+def parse_response_model_str(content: str, response_model: Type[Base]) -> Optional[Base]:
     structured_output = None
     try:
         structured_output = response_model(**json.loads(content))
