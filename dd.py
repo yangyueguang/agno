@@ -1,10 +1,8 @@
 import json
 from textwrap import dedent
 from typing import Dict, Iterator, Optional, Union, Any, Optional, Iterable
-from agno.agent import Agent, Team, RunResponse, Workflow, Knowledge
+from agno import Agent, Team, RunResponse, Workflow, Knowledge, Ollama, Toolkit
 from pydantic import BaseModel, Field
-from agno.models import Ollama, Toolkit
-from agno.memory import RunResponse
 from duckduckgo_search import DDGS
 import yfinance as yf
 
