@@ -121,40 +121,6 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
     return json_schema
 
 
-def get_json_schema(type_hints: Dict[str, Any], param_descriptions: Optional[Dict[str, str]] = None, strict: bool = False) -> Dict[str, Any]:
-    json_schema: Dict[str, Any] = {'type': 'object', 'properties': {}}
-    if strict:
-        json_schema['additionalProperties'] = False
-    for k, v in type_hints.items():
-        if k == 'return':
-            continue
-        try:
-            type_origin = get_origin(v)
-            type_args = get_args(v)
-            is_optional = type_origin is Union and len(type_args) == 2 and any(arg is type(None) for arg in type_args)
-            if is_optional:
-                v = next(arg for arg in type_args if arg is not type(None))
-            if v:
-                arg_json_schema = get_json_schema_for_arg(v)
-            else:
-                arg_json_schema = {}
-            if arg_json_schema is not None:
-                if is_optional:
-                    if isinstance(arg_json_schema['type'], list):
-                        arg_json_schema['type'].append('null')
-                    else:
-                        arg_json_schema['type'] = [arg_json_schema['type'], 'null']
-                if param_descriptions and k in param_descriptions and param_descriptions[k]:
-                    arg_json_schema['description'] = param_descriptions[k]
-                json_schema['properties'][k] = arg_json_schema
-            else:
-                print(f'Could not parse argument {k} of type {v}')
-        except Exception as e:
-            print(f'Error processing argument {k}: {str(e)}')
-            continue
-    return json_schema
-
-
 class Function(BaseModel):
     name: str
     description: Optional[str] = None
@@ -191,6 +157,42 @@ class Function(BaseModel):
         return '\n'.join(lines)
 
     @classmethod
+    def get_json_schema(cls, type_hints: Dict[str, Any], param_descriptions: Optional[Dict[str, str]] = None,
+                        strict: bool = False) -> Dict[str, Any]:
+        json_schema: Dict[str, Any] = {'type': 'object', 'properties': {}}
+        if strict:
+            json_schema['additionalProperties'] = False
+        for k, v in type_hints.items():
+            if k == 'return':
+                continue
+            try:
+                type_origin = get_origin(v)
+                type_args = get_args(v)
+                is_optional = type_origin is Union and len(type_args) == 2 and any(
+                    arg is type(None) for arg in type_args)
+                if is_optional:
+                    v = next(arg for arg in type_args if arg is not type(None))
+                if v:
+                    arg_json_schema = get_json_schema_for_arg(v)
+                else:
+                    arg_json_schema = {}
+                if arg_json_schema is not None:
+                    if is_optional:
+                        if isinstance(arg_json_schema['type'], list):
+                            arg_json_schema['type'].append('null')
+                        else:
+                            arg_json_schema['type'] = [arg_json_schema['type'], 'null']
+                    if param_descriptions and k in param_descriptions and param_descriptions[k]:
+                        arg_json_schema['description'] = param_descriptions[k]
+                    json_schema['properties'][k] = arg_json_schema
+                else:
+                    print(f'Could not parse argument {k} of type {v}')
+            except Exception as e:
+                print(f'Error processing argument {k}: {str(e)}')
+                continue
+        return json_schema
+
+    @classmethod
     def from_callable(cls, c: Callable, strict: bool = False) -> 'Function':
         function_name = c.__name__
         parameters = {'type': 'object', 'properties': {}, 'required': []}
@@ -209,7 +211,7 @@ class Function(BaseModel):
                         param_name = param.arg_name
                         param_type = param.type_name
                         param_descriptions[param_name] = f'({param_type}) {param.description}'
-            parameters = get_json_schema(type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict)
+            parameters = cls.get_json_schema(type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict)
             if strict:
                 parameters['required'] = [name for name in parameters['properties'] if name != 'agent']
             else:
@@ -246,7 +248,7 @@ class Function(BaseModel):
                         param_name = param.arg_name
                         param_type = param.type_name
                         param_descriptions[param_name] = f'({param_type}) {param.description}'
-            parameters = get_json_schema(type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict)
+            parameters = self.get_json_schema(type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict)
             if strict:
                 parameters['required'] = [name for name in parameters['properties'] if name != 'agent']
             else:

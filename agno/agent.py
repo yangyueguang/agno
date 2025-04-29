@@ -25,7 +25,7 @@ from collections import ChainMap, defaultdict, deque
 from pydantic import BaseModel, ValidationError
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Set, Type, Union, cast, Mapping
 from agno.models import Ollama, Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact, Model, Citations, Message, MessageReferences, MessageMetrics, ModelResponse, ModelResponseEvent, Timer, Function, Toolkit
-from agno.memory import TeamMemory, TeamRun, Memory, SessionSummary, AgentMemory, AgentRun, RunEvent, RunResponse, RunResponseExtraData, TeamRunResponse, RunMessages, NextAction, ReasoningStep, ReasoningSteps, get_deepseek_reasoning, get_openai_reasoning, aget_deepseek_reasoning, get_next_action, update_messages_with_reasoning, aget_openai_reasoning
+from agno.memory import TeamMemory, TeamRun, Memory, SessionSummary, AgentMemory, AgentRun, RunEvent, RunResponse, RunResponseExtraData, TeamRunResponse, RunMessages, NextAction, ReasoningStep, ReasoningSteps
 from hashlib import md5
 import random
 import csv
@@ -34,7 +34,6 @@ import inspect
 import requests
 from sqlalchemy.dialects import mysql
 from sqlalchemy.engine import Engine, create_engine
-from sqlalchemy.engine.row import Row
 from sqlalchemy.inspection import inspect as sqlinspect
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.schema import Column, MetaData, Table
@@ -2062,7 +2061,17 @@ class Agent:
     def reason(self, run_messages: RunMessages) -> Iterator[RunResponse]:
         if self.stream_intermediate_steps:
             yield self.create_run_response(content='Reasoning started', event=RunEvent.reasoning_started)
-        ds_reasoning_message: Optional[Message] = get_deepseek_reasoning(reasoning_agent=self.reasoning_agent, messages=run_messages.get_input_messages())
+        for message in run_messages.get_input_messages():
+            if message.role == 'developer':
+                message.role = 'system'
+        reasoning_content: str = ''
+        reasoning_agent_response: RunResponse = self.reasoning_agent.run(messages=run_messages.get_input_messages())
+        if reasoning_agent_response.messages is not None:
+            for msg in reasoning_agent_response.messages:
+                if msg.reasoning_content is not None:
+                    reasoning_content = msg.reasoning_content
+                    break
+        ds_reasoning_message = Message(role='assistant', content=f'<thinking>\n{reasoning_content}\n</thinking>', reasoning_content=reasoning_content)
         if ds_reasoning_message is None:
             print('推理错误。推理反应为无，继续常规会话...')
             return
@@ -2097,21 +2106,43 @@ class Agent:
                 first_assistant_index = next((i for i, m in enumerate(reasoning_agent_response.messages) if m.role == 'assistant'), len(reasoning_agent_response.messages))
                 reasoning_messages = reasoning_agent_response.messages[first_assistant_index:]
                 self.update_run_response_with_reasoning(reasoning_steps=reasoning_steps, reasoning_agent_messages=reasoning_agent_response.messages)
-                next_action = get_next_action(reasoning_steps[-1])
+                next_action = reasoning_steps[-1].next_action or NextAction.FINAL_ANSWER
+                if isinstance(next_action, str):
+                    try:
+                        next_action = NextAction(next_action)
+                    except ValueError:
+                        next_action = NextAction.FINAL_ANSWER
                 if next_action == NextAction.FINAL_ANSWER:
                     break
             except Exception as e:
                 print(f'Reasoning error: {e}')
                 break
         print(f'Total Reasoning steps: {len(all_reasoning_steps)}\nReasoning finished')
-        update_messages_with_reasoning(run_messages=run_messages, reasoning_messages=reasoning_messages)
+        run_messages.messages.append(Message(role='assistant',
+                                             content='I have worked through this problem in-depth, running all necessary tools and have included my raw, step by step research. ',
+                                             add_to_agent_memory=False))
+        for message in reasoning_messages:
+            message.add_to_agent_memory = False
+        run_messages.messages.extend(reasoning_messages)
+        run_messages.messages.append(Message(role='assistant',
+                                             content='Now I will summarize my reasoning and provide a final answer. I will skip any tool calls already executed and steps that are not relevant to the final answer.',
+                                             add_to_agent_memory=False))
         if self.stream_intermediate_steps:
             yield self.create_run_response(content=ReasoningSteps(reasoning_steps=all_reasoning_steps), content_type=ReasoningSteps.__class__.__name__, event=RunEvent.reasoning_completed)
                 
     async def areason(self, run_messages: RunMessages) -> Any:
         if self.stream_intermediate_steps:
             yield self.create_run_response(content='Reasoning started', event=RunEvent.reasoning_started)
-        ds_reasoning_message: Optional[Message] = await aget_deepseek_reasoning(reasoning_agent=self.reasoning_agent, messages=run_messages.get_input_messages())
+        for message in run_messages.get_input_messages():
+            if message.role == 'developer':
+                message.role = 'system'
+        reasoning_content: str = ''
+        reasoning_agent_response: RunResponse = await self.reasoning_agent.arun(messages=run_messages.get_input_messages())
+        for msg in reasoning_agent_response.messages:
+            if msg.reasoning_content:
+                reasoning_content = msg.reasoning_content
+                break
+        ds_reasoning_message = Message(role='assistant', content=f'<thinking>\n{reasoning_content}\n</thinking>', reasoning_content=reasoning_content)
         if ds_reasoning_message is None:
             print('推理错误。推理反应为无，继续常规会话...')
             return
@@ -2146,7 +2177,12 @@ class Agent:
                 first_assistant_index = next((i for i, m in enumerate(reasoning_agent_response.messages) if m.role == 'assistant'), len(reasoning_agent_response.messages))
                 reasoning_messages = reasoning_agent_response.messages[first_assistant_index:]
                 self.update_run_response_with_reasoning(reasoning_steps=reasoning_steps, reasoning_agent_messages=reasoning_agent_response.messages)
-                next_action = get_next_action(reasoning_steps[-1])
+                next_action = reasoning_steps[-1].next_action or NextAction.FINAL_ANSWER
+                if isinstance(next_action, str):
+                    try:
+                        next_action = NextAction(next_action)
+                    except ValueError:
+                        next_action = NextAction.FINAL_ANSWER
                 if next_action == NextAction.FINAL_ANSWER:
                     break
             except Exception as e:
@@ -2154,7 +2190,15 @@ class Agent:
                 break
         print(f'Total Reasoning steps: {len(all_reasoning_steps)}')
         print('Reasoning finished')
-        update_messages_with_reasoning(run_messages=run_messages, reasoning_messages=reasoning_messages)
+        run_messages.messages.append(Message(role='assistant',
+                                             content='I have worked through this problem in-depth, running all necessary tools and have included my raw, step by step research. ',
+                                             add_to_agent_memory=False))
+        for message in reasoning_messages:
+            message.add_to_agent_memory = False
+        run_messages.messages.extend(reasoning_messages)
+        run_messages.messages.append(Message(role='assistant',
+                                             content='Now I will summarize my reasoning and provide a final answer. I will skip any tool calls already executed and steps that are not relevant to the final answer.',
+                                             add_to_agent_memory=False))
         if self.stream_intermediate_steps:
             yield self.create_run_response(content=ReasoningSteps(reasoning_steps=all_reasoning_steps), content_type=ReasoningSteps.__class__.__name__, event=RunEvent.reasoning_completed)
 
@@ -2311,7 +2355,10 @@ class Agent:
             if isinstance(run_response, RunResponse):
                 if isinstance(run_response.content, str):
                     if self.markdown:
-                        escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
+                        escaped_content = run_response.content
+                        for tag in tags_to_include_in_markdown:
+                            escaped_content = escaped_content.replace(f'<{tag}>', f'&lt;{tag}&gt;')
+                            escaped_content = escaped_content.replace(f'</{tag}>', f'&lt;/{tag}&gt;')
                         response_content_batch = Markdown(escaped_content)
                     else:
                         response_content_batch = run_response.get_content_as_string(indent=4)
@@ -3280,7 +3327,10 @@ class Team:
                                 tags_to_include_in_markdown: Set[str], show_markdown: bool = True) -> Any:
         if isinstance(run_response.content, str):
             if show_markdown:
-                escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
+                escaped_content = run_response.content
+                for tag in tags_to_include_in_markdown:
+                    escaped_content = escaped_content.replace(f'<{tag}>', f'&lt;{tag}&gt;')
+                    escaped_content = escaped_content.replace(f'</{tag}>', f'&lt;/{tag}&gt;')
                 return Markdown(escaped_content)
             else:
                 return run_response.get_content_as_string(indent=4)
@@ -3327,8 +3377,18 @@ class Team:
             yield self._create_run_response(from_run_response=run_response, content='Reasoning started',
                                             event=RunEvent.reasoning_started)
         reasoning_agent = self.reasoning_agent
-        reasoning_message = get_deepseek_reasoning(reasoning_agent=reasoning_agent,
-                                                   messages=run_messages.get_input_messages())
+        for message in run_messages.get_input_messages():
+            if message.role == 'developer':
+                message.role = 'system'
+        reasoning_content: str = ''
+        reasoning_agent_response: RunResponse = reasoning_agent.run(messages=run_messages.get_input_messages())
+        if reasoning_agent_response.messages is not None:
+            for msg in reasoning_agent_response.messages:
+                if msg.reasoning_content is not None:
+                    reasoning_content = msg.reasoning_content
+                    break
+        reasoning_message = Message(role='assistant', content=f'<thinking>\n{reasoning_content}\n</thinking>',
+                       reasoning_content=reasoning_content)
         if reasoning_message is None:
             print('Reasoning error. Reasoning response is None, continuing regular session...')
             return
@@ -3348,8 +3408,17 @@ class Team:
             yield self._create_run_response(from_run_response=run_response, content='Reasoning started',
                                             event=RunEvent.reasoning_started)
         reasoning_agent = self.reasoning_agent
-        reasoning_message = await aget_deepseek_reasoning(reasoning_agent=reasoning_agent,
-                                                          messages=run_messages.get_input_messages())
+        for message in run_messages.get_input_messages():
+            if message.role == 'developer':
+                message.role = 'system'
+        reasoning_content: str = ''
+        reasoning_agent_response: RunResponse = await reasoning_agent.arun(messages=run_messages.get_input_messages())
+        for msg in reasoning_agent_response.messages:
+            if msg.reasoning_content:
+                reasoning_content = msg.reasoning_content
+                break
+        reasoning_message = Message(role='assistant', content=f'<thinking>\n{reasoning_content}\n</thinking>',
+                       reasoning_content=reasoning_content)
         if reasoning_message is None:
             print('Reasoning error. Reasoning response is None, continuing regular session...')
             return
@@ -4628,14 +4697,6 @@ def merge_dictionaries(a: Dict[str, Any], b: Dict[str, Any]):
 
 def create_panel(content, title, border_style='blue'):
     return Panel(content, title=title, title_align='left', border_style=border_style, box=HEAVY, expand=True, padding=(1, 1))
-
-
-def escape_markdown_tags(content: str, tags: Set[str]) -> str:
-    escaped_content = content
-    for tag in tags:
-        escaped_content = escaped_content.replace(f'<{tag}>', f'&lt;{tag}&gt;')
-        escaped_content = escaped_content.replace(f'</{tag}>', f'&lt;/{tag}&gt;')
-    return escaped_content
 
 
 def update_run_response_with_reasoning(run_response: Union[RunResponse, TeamRunResponse], reasoning_steps: List[ReasoningStep], reasoning_agent_messages: List[Message]) -> None:
