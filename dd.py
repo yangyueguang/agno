@@ -7,7 +7,6 @@ import requests
 import re
 from lxml import etree
 from datetime import datetime
-from pydantic import BaseModel
 
 
 class DD:
@@ -180,7 +179,7 @@ class StockAnalysis(Base):
     analysis: str
 
 
-stock_searcher = Agent(name='stock resercher', model=Ollama(id='llama3.1:8b'), response_model=StockAnalysis, role='在网上搜索股票信息。', tools=[
+stock_searcher = Agent(name='stock resercher', model=Ollama('llama3.1:8b'), response_model=StockAnalysis, role='在网上搜索股票信息。', tools=[
         YFinanceTools(stock_price=True, analyst_recommendations=True)
     ])
 
@@ -190,9 +189,9 @@ class CompanyAnalysis(Base):
     analysis: str
 
 
-company_info_agent = Agent(name='company info researcher', model=Ollama(id='llama3.1:8b'), role='在网上搜索股票信息。', response_model=CompanyAnalysis, tools=[YFinanceTools(stock_price=False, company_info=True, company_news=True)])
+company_info_agent = Agent(name='company info researcher', model=Ollama('llama3.1:8b'), role='在网上搜索股票信息。', response_model=CompanyAnalysis, tools=[YFinanceTools(stock_price=False, company_info=True, company_news=True)])
 
-team = Team(name='股票研究团队', mode='route', model=Ollama(id='llama3.1:8b'), members=[stock_searcher, company_info_agent], markdown=True, debug_mode=True, show_members_responses=True)
+team = Team(name='股票研究团队', mode='route', model=Ollama('llama3.1:8b'), members=[stock_searcher, company_info_agent], markdown=True, debug_mode=True, show_members_responses=True)
 response = team.run('NVDA目前的股价是多少？')
 assert isinstance(response.content, StockAnalysis)
 print(response.content)

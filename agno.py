@@ -77,14 +77,17 @@ class Dot(dict):
 
 
 class Base:
-    def __init__(self, **kwargs):
+    def __init__(self, *args, **kwargs):
         annotations = {}
         for cls in self.__class__.__mro__:
             annotations.update(cls.__dict__.get('__annotations__', {}))
+        names = list(annotations.keys())
+        for i, v in enumerate(args[:len(names)]):
+            setattr(self, names[i], v)
         for k, v in annotations.items():
             if k in kwargs:
                 setattr(self, k, kwargs[k])
-            else:
+            elif not hasattr(self, k):
                 if hasattr(self.__class__, k):
                     setattr(self, k, getattr(self.__class__, k))
                 else:
