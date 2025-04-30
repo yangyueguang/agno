@@ -2,8 +2,70 @@ import json
 from textwrap import dedent
 from typing import Dict, Iterator, Any, Optional
 from agno import Agent, Team, RunResponse, Workflow, Knowledge, Ollama, Toolkit, Function, MessageMetrics, Message, Base, VideoArtifact
-from duckduckgo_search import DDGS
 import yfinance as yf
+import requests
+import re
+from lxml import etree
+from datetime import datetime
+
+
+class DD:
+    def text(self, keywords: str):
+        """doc"""
+        payload = {"q": keywords, "b": "", "kl": 'wt-wt'}
+        results = []
+        for _ in range(5):
+            resp_content = requests.post("https://html.duckduckgo.com/html", data=payload).text
+            if "No  results." in resp_content:
+                break
+            tree = etree.HTML(resp_content)
+            elements = tree.xpath("//div[h2]")
+            for e in elements:
+                hrefxpath = e.xpath("./a/@href")
+                href = str(hrefxpath[0]) if hrefxpath and isinstance(hrefxpath, list) else None
+                if href and not href.startswith(("http://www.google.com/search?q=", "https://duckduckgo.com/y.js?ad_domain")):
+                    titlexpath = e.xpath("./h2/a/text()")
+                    title = str(titlexpath[0]) if titlexpath and isinstance(titlexpath, list) else ""
+                    body = "".join(str(x) for x in e.xpath("./a//text()") or [])
+                    results.append({"title": re.compile("<.*?>").sub("", title), "href": href, "body": re.compile("<.*?>").sub("", body)})
+            npx = tree.xpath('.//div[@class="nav-link"]')
+            if not npx:
+                break
+            next_page = npx[-1]
+            names = next_page.xpath('.//input[@type="hidden"]/@name')
+            values = next_page.xpath('.//input[@type="hidden"]/@value')
+            if isinstance(names, list) and isinstance(values, list):
+                payload = {str(n): str(v) for n, v in zip(names, values)}
+        return results
+
+    def images(self, keywords: str):
+        payload = {"l": 'wt-wt', "o": "json", "q": keywords, "vqd": re.search('vqd=(.*?),', requests.get("https://duckduckgo.com", params={"q": keywords}).text).group(1).strip()[1:-1], "f": f",,,,,", "p": '-1'}
+        results = []
+        for _ in range(3):
+            res = requests.get("https://duckduckgo.com/i.js", params=payload, headers={"Referer": "https://duckduckgo.com/",
+                                               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}).json()
+            page_data = res.get("results", [])
+            for row in page_data:
+                results.append({"title": row["title"], "image": row.get("image"), "url": row["url"], "height": row["height"], "width": row["width"], "source": row["source"]})
+            next = res.get("next")
+            if not next:
+                break
+            payload["s"] = next.split("s=")[-1].split("&")[0]
+        return results
+
+    def news(self, keywords: str):
+        payload = {"l": 'wt-wt', "o": "json", "noamp": "1", "q": keywords, "vqd": re.search('vqd=(.*?),', requests.get("https://duckduckgo.com", params={"q": keywords}).text).group(1).strip()[1:-1], "p": '-2', 'df': 'w'}  # d w m y
+        results = []
+        for _ in range(3):
+            res = requests.get("https://duckduckgo.com/news.js", payload, headers={"Referer": "https://duckduckgo.com/",
+                                               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}).json()
+            for row in res.get("results", []):
+                results.append({"date": datetime.fromtimestamp(row["date"]), "title": row["title"], "body": re.compile("<.*?>").sub("", row["excerpt"]).replace('&quot;', '"'), "url": row["url"], "image": row.get("image", None), "source": row["source"]})
+            next = res.get("next")
+            if not next:
+                break
+            payload["s"] = next.split("s=")[-1].split("&")[0]
+        return results
 
 
 class YFinanceTools(Toolkit):
@@ -92,14 +154,12 @@ class DuckDuckGoTools(Toolkit):
         actual_max_results = self.fixed_max_results or max_results
         search_query = f'{self.modifier} {query}' if self.modifier else query
         print(f'Searching DDG for: {search_query}')
-        ddgs = DDGS(headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl)
-        return json.dumps(ddgs.text(keywords=search_query, max_results=actual_max_results), indent=2)
+        return json.dumps(DD().text(keywords=search_query), indent=2)
 
     def duckduckgo_news(self, query: str, max_results: int = 5) -> str:
         actual_max_results = self.fixed_max_results or max_results
         print(f'Searching DDG news for: {query}')
-        ddgs = DDGS(headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl)
-        return json.dumps(ddgs.news(keywords=query, max_results=actual_max_results), indent=2)
+        return json.dumps(DD.news(query), indent=2)
 
 
 class NewspaperTools(Toolkit):
@@ -110,11 +170,7 @@ class NewspaperTools(Toolkit):
 
     def get_article_text(self, url: str) -> str:
         print(f'Reading news: {url}')
-        from newspaper import Article
-        article = Article(url)
-        article.download()
-        article.parse()
-        return article.text
+        return '找不到相关内容'
 
 
 class StockAnalysis(Base):
@@ -264,7 +320,7 @@ X-2000教授撰写的报告
         print(f'Saving scraped articles for topic: {topic}')
         self.session_state.setdefault('scraped_articles', {})
         self.session_state['scraped_articles'][topic] = scraped_articles
-        writer_input = {'topic': topic, 'articles': [v.model_dump() for v in scraped_articles.values()]}
+        writer_input = {'topic': topic, 'articles': [v.to_dict() for v in scraped_articles.values()]}
         yield from self.writer.run(json.dumps(writer_input, indent=4), stream=True)
         print(f'Saving report for topic: {topic}')
         self.session_state.setdefault('reports', {})
@@ -279,7 +335,7 @@ X-2000教授撰写的报告
                     print(f'Found {article_count} articles on attempt {attempt + 1}')
                     print(f'Saving search results for topic: {topic}')
                     self.session_state.setdefault('search_results', {})
-                    self.session_state['search_results'][topic] = searcher_response.content.model_dump()
+                    self.session_state['search_results'][topic] = searcher_response.content.to_dict()
                     return searcher_response.content
                 else:
                     print(f'Attempt {attempt + 1}/{num_attempts} failed: Invalid response type')

@@ -9,7 +9,6 @@ import textwrap
 import random
 import csv
 import io
-import bs4
 import docx
 import pypdf
 import uuid
@@ -27,6 +26,7 @@ import zlib
 import functools
 import docstring_parser
 import sqlalchemy
+from lxml import etree
 from rich.box import HEAVY
 from rich.panel import Panel
 from rich.prompt import Prompt
@@ -851,7 +851,7 @@ class Message(Base):
         if self.audio_output:
             message_dict['audio_output'] = self.audio_output.to_dict()
         if self.references:
-            message_dict['references'] = self.references.model_dump()
+            message_dict['references'] = self.references.to_dict()
         if self.metrics:
             mdict = self.metrics.__dict__
             mdict.pop('timer')
@@ -1530,12 +1530,12 @@ class Model(Base):
             if isinstance(response_usage.prompt_tokens_details, dict):
                 assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details
             elif hasattr(response_usage.prompt_tokens_details, 'model_dump'):
-                assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details.model_dump(exclude_none=True)
+                assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details.to_dict()
         if hasattr(response_usage, 'completion_tokens_details'):
             if isinstance(response_usage.completion_tokens_details, dict):
                 assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details
             elif hasattr(response_usage.completion_tokens_details, 'model_dump'):
-                assistant_message.metrics.completion_tokens_details = (response_usage.completion_tokens_details.model_dump(exclude_none=True))
+                assistant_message.metrics.completion_tokens_details = (response_usage.completion_tokens_details.to_dict())
 
     def _log_messages(self, messages: List[Message]) -> None:
         for m in messages:
@@ -1944,7 +1944,7 @@ class RunResponseExtraData:
 
     def to_dict(self) -> Dict[str, Any]:
         return {'add_messages': [m.to_dict() for m in self.add_messages], 'reasoning_messages': [m.to_dict() for m in self.reasoning_messages],
-                'reasoning_steps': [rs.model_dump() for rs in self.reasoning_steps], 'references': [r.model_dump() for r in self.references]}
+                'reasoning_steps': [rs.to_dict() for rs in self.reasoning_steps], 'references': [r.to_dict() for r in self.references]}
 
 
 class RunResponse:
@@ -1981,19 +1981,19 @@ class RunResponse:
         res = self.__dict__.copy()
         res.update({'messages': [m.to_dict() for m in self.messages],
                     'extra_data': (self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data),
-                    'images': [img.model_dump(exclude_none=True) for img in self.images],
-                    'videos': [vid.model_dump(exclude_none=True) for vid in self.videos],
-                    'audio': [aud.model_dump(exclude_none=True) for aud in self.audio],
+                    'images': [img.to_dict() for img in self.images],
+                    'videos': [vid.to_dict() for vid in self.videos],
+                    'audio': [aud.to_dict() for aud in self.audio],
                     'response_audio': self.response_audio.to_dict() if isinstance(self.response_audio, AudioResponse) else self.response_audio})
         if isinstance(self.content, Base):
-            res['content'] = self.content.model_dump(exclude_none=True)
+            res['content'] = self.content.to_dict()
         return {k: v for k, v in res.items() if v}
 
     def get_content_as_string(self, **kwargs) -> str:
         if isinstance(self.content, str):
             return self.content
         elif isinstance(self.content, Base):
-            return self.content.model_dump_json(exclude_none=True, **kwargs)
+            return self.content.to_dict()
         else:
             return json.dumps(self.content, **kwargs)
 
@@ -2011,11 +2011,11 @@ class TeamRunResponse(RunResponse):
         if self.response_audio is not None:
             res['response_audio'] = self.response_audio.to_dict()
         if isinstance(self.content, Base):
-            res['content'] = self.content.model_dump(exclude_none=True)
+            res['content'] = self.content.to_dict()
         res.update({'messages': [m.to_dict() for m in self.messages],
-                    'images': [img.model_dump(exclude_none=True) for img in self.images],
-                    'videos': [vid.model_dump(exclude_none=True) for vid in self.videos],
-                    'audio': [aud.model_dump(exclude_none=True) for aud in self.audio],
+                    'images': [img.to_dict() for img in self.images],
+                    'videos': [vid.to_dict() for vid in self.videos],
+                    'audio': [aud.to_dict() for aud in self.audio],
                     'member_responses': [response.to_dict() for response in self.member_responses]})
         return res
 
@@ -2044,7 +2044,7 @@ class TeamRunResponse(RunResponse):
         if isinstance(self.content, str):
             return self.content
         elif isinstance(self.content, Base):
-            return self.content.model_dump_json(exclude_none=True, **kwargs)
+            return self.content.to_dict()
         else:
             return json.dumps(self.content, **kwargs)
 
@@ -2073,7 +2073,7 @@ class MemoryRow(Base):
     id: str = ''
 
     def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
-        _dict = self.model_dump(exclude={'created_at', 'updated_at'})
+        _dict = self.to_dict()
         _dict['created_at'] = self.created_at.isoformat() if self.created_at else None
         _dict['updated_at'] = self.updated_at.isoformat() if self.updated_at else None
         if self.id is None:
@@ -2307,9 +2307,6 @@ class Memory(Base):
     topic: str
     input: str
 
-    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
-        return self.model_dump(exclude_none=True)
-
 
 class MemoryClassifier(Base):
     model: Model = None
@@ -2363,9 +2360,6 @@ class MemoryClassifier(Base):
 class SessionSummary(Base):
     summary: str  # '会议总结。简明扼要，只关注重要信息。不要编造任何东西。'
     topics: List[str]  # '会议讨论的主题'
-
-    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
-        return self.model_dump(exclude_none=True)
 
 
 class MemorySummarizer(Base):
@@ -2530,7 +2524,7 @@ class AgentMemory(Base):
     updating_memory: bool = False
 
     def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
-        _memory_dict = self.model_dump(exclude_none=True, include={'update_system_message_on_change', 'create_session_summary', 'update_session_summary_after_run', 'create_user_memories', 'update_user_memories_after_run', 'user_id', 'num_memories'})
+        _memory_dict = self.to_dict(include={'update_system_message_on_change', 'create_session_summary', 'update_session_summary_after_run', 'create_user_memories', 'update_user_memories_after_run', 'user_id', 'num_memories'})
         if self.summary is not None:
             _memory_dict['summary'] = self.summary.to_dict()
         if self.memories is not None:
@@ -2563,7 +2557,7 @@ class AgentMemory(Base):
         print(f'Added {len(messages)} Messages to AgentMemory')
 
     def get_messages(self) -> List[Dict[str, Any]]:
-        return [message.model_dump() for message in self.messages]
+        return [message.to_dict() for message in self.messages]
 
     def get_messages_from_last_n_runs(self, last_n: int = None, skip_role: str = None) -> List[Message]:
         if not self.runs:
@@ -2837,7 +2831,7 @@ class TeamMemory(Base):
         print(f'Added {len(messages)} Messages to TeamMemory')
 
     def get_messages(self) -> List[Dict[str, Any]]:
-        return [message.model_dump() for message in self.messages]
+        return [message.to_dict() for message in self.messages]
 
     def get_messages_from_last_n_runs(self, last_n: int = None, skip_role: str = None) -> List[Message]:
         if not self.runs:
@@ -2977,9 +2971,6 @@ class WorkflowRun(Base):
 
 class WorkflowMemory(Base):
     runs: List[WorkflowRun]
-
-    def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
-        return self.model_dump(exclude_none=True)
 
     def add_run(self, workflow_run: WorkflowRun) -> None:
         self.runs.append(workflow_run)
@@ -3128,42 +3119,45 @@ class Reader:
         document = Document(name=doc_name, id=doc_name, meta_data={'url': url}, content=response.text)
         return self.chunk_document(document) if self.chunk_size > 0 else [document]
 
-    def read_website(self, url: str, max_depth=3, max_links=10) -> List[Document]:
+    def read_website(self, url: str, max_depth=3, max_links=10):
         print(f'Reading: {url}')
         num_links = 0
         crawler_result: Dict[str, str] = {}
         primary_domain = '.'.join(url.split('/')[2].split('.')[1:])
         urls_to_crawl = [(url, 1)]
         visited = set()
+
         while urls_to_crawl:
             current_url, current_depth = urls_to_crawl.pop(0)
-            if current_url in visited or not current_url.split('/')[2].endswith(primary_domain) or current_depth > max_depth or num_links >= max_links:
+            if current_url in visited or not current_url.split('/')[2].endswith(
+                    primary_domain) or current_depth > max_depth or num_links >= max_links:
                 continue
             visited.add(current_url)
             time.sleep(random.uniform(1, 3))
             try:
                 print(f'Crawling: {current_url}')
                 response = requests.get(current_url, timeout=10)
-                soup = bs4.BeautifulSoup(response.content, 'html.parser')
+                tree = etree.HTML(response.content)
                 for tag in ['article', 'main', 'content', 'main-content', 'post-content']:
-                    if element := soup.find(tag) if tag in ['article', 'main'] else soup.find(class_=tag):
-                        crawler_result[current_url] = element.get_text(strip=True, separator=' ')
+                    if tag in ['article', 'main']:
+                        elements = tree.xpath(f'//{tag}')
+                    else:
+                        elements = tree.xpath(f'//*[@class="{tag}"]')
+                    if elements:
+                        element = elements[0]
+                        crawler_result[current_url] = ''.join(element.itertext()).strip().replace('\n', ' ')
                         num_links += 1
                         break
-                for link in soup.find_all('a', href=True):
-                    if not isinstance(link, bs4.Tag):
-                        continue
-                    href_str = str(link['href'])
+                for link in tree.xpath('//a[@href]'):
+                    href_str = link.get('href')
                     if href_str.startswith('http'):
                         full_url = href_str
                     else:
                         full_url = '/'.join([current_url.rstrip('/'), href_str.lstrip('.').lstrip('/')])
-                    if not isinstance(full_url, str):
-                        continue
-                    if full_url.split('/')[2].endswith(primary_domain) and not any(full_url.endswith(ext) for ext in ['.pdf', '.jpg', '.png']):
-                        full_url_str = str(full_url)
-                        if full_url_str not in visited and (full_url_str, current_depth + 1) not in urls_to_crawl:
-                            urls_to_crawl.append((full_url_str, current_depth + 1))
+                    if full_url.split('/')[2].endswith(primary_domain) and not any(
+                            full_url.endswith(ext) for ext in ['.pdf', '.jpg', '.png']):
+                        if full_url not in visited and (full_url, current_depth + 1) not in urls_to_crawl:
+                            urls_to_crawl.append((full_url, current_depth + 1))
             except Exception as e:
                 print(f'Failed to crawl: {current_url}: {e}')
                 pass
@@ -4239,11 +4233,11 @@ class Agent:
         if self.team_data is not None:
             session_data['team_data'] = self.team_data
         if self.images is not None:
-            session_data['images'] = [img.model_dump() for img in self.images]
+            session_data['images'] = [img.to_dict() for img in self.images]
         if self.videos is not None:
-            session_data['videos'] = [vid.model_dump() for vid in self.videos]
+            session_data['videos'] = [vid.to_dict() for vid in self.videos]
         if self.audio is not None:
-            session_data['audio'] = [aud.model_dump() for aud in self.audio]
+            session_data['audio'] = [aud.to_dict() for aud in self.audio]
         return session_data
 
     def get_agent_session(self) -> AgentSession:
@@ -4709,7 +4703,7 @@ class Agent:
                     yield member_agent_run_response.content
                 elif issubclass(type(member_agent_run_response.content), Base):
                     try:
-                        yield member_agent_run_response.content.model_dump_json(indent=2)
+                        yield json.dumps(member_agent_run_response.content.to_dict())
                     except Exception as e:
                         yield str(e)
                 else:
@@ -5246,7 +5240,7 @@ class Agent:
                         response_content_batch = run_response.get_content_as_string(indent=4)
                 elif self.response_model is not None and isinstance(run_response.content, Base):
                     try:
-                        response_content_batch = JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
+                        response_content_batch = JSON(json.dumps(run_response.content.to_dict()), indent=2)
                     except Exception as e:
                         print(f'Failed to convert response to JSON: {e}')
                 else:
@@ -6210,7 +6204,7 @@ class Team:
                 return run_response.get_content_as_string(indent=4)
         elif isinstance(run_response.content, Base):
             try:
-                return JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
+                return JSON(json.dumps(run_response.content.to_dict()), indent=2)
             except Exception as e:
                 print(f'Failed to convert response to JSON: {e}')
         else:
@@ -6788,7 +6782,7 @@ class Team:
                         yield member_agent_run_response.content
                     elif issubclass(type(member_agent_run_response.content), Base):
                         try:
-                            yield member_agent_run_response.content.model_dump_json(indent=2)
+                            yield json.dumps(member_agent_run_response.content.to_dict())
                         except Exception as e:
                             yield str(e)
                     else:
@@ -6844,7 +6838,7 @@ class Team:
                         return f'Agent {member_name}: {response.content}'
                     elif issubclass(type(response.content), Base):
                         try:
-                            return f'Agent {member_name}: {response.content.model_dump_json(indent=2)}'
+                            return f'Agent {member_name}: {json.dumps(response.content.to_dict())}'
                         except Exception as e:
                             return f'Agent {member_name}: Error - {str(e)}'
                     else:
@@ -6917,7 +6911,7 @@ class Team:
                     yield member_agent_run_response.content
                 elif issubclass(type(member_agent_run_response.content), Base):
                     try:
-                        yield member_agent_run_response.content.model_dump_json(indent=2)
+                        yield json.dumps(member_agent_run_response.content.to_dict())
                     except Exception as e:
                         yield str(e)
                 else:
@@ -6973,7 +6967,7 @@ class Team:
                     yield member_agent_run_response.content
                 elif issubclass(type(member_agent_run_response.content), Base):
                     try:
-                        yield member_agent_run_response.content.model_dump_json(indent=2)
+                        yield json.dumps(member_agent_run_response.content.to_dict())
                     except Exception as e:
                         yield str(e)
                 else:
@@ -7044,7 +7038,7 @@ class Team:
                     yield member_agent_run_response.content
                 elif issubclass(type(member_agent_run_response.content), Base):
                     try:
-                        yield member_agent_run_response.content.model_dump_json(indent=2)
+                        yield json.dumps(member_agent_run_response.content.to_dict())
                     except Exception as e:
                         yield str(e)
                 else:
@@ -7087,7 +7081,7 @@ class Team:
                     yield member_agent_run_response.content
                 elif issubclass(type(member_agent_run_response.content), Base):
                     try:
-                        yield member_agent_run_response.content.model_dump_json(indent=2)
+                        yield json.dumps(member_agent_run_response.content.to_dict())
                     except Exception as e:
                         yield str(e)
                 else:
@@ -7246,11 +7240,11 @@ class Team:
         if self.session_state is not None and len(self.session_state) > 0:
             session_data['session_state'] = self.session_state
         if self.images is not None:
-            session_data['images'] = [img.model_dump() for img in self.images]
+            session_data['images'] = [img.to_dict() for img in self.images]
         if self.videos is not None:
-            session_data['videos'] = [vid.model_dump() for vid in self.videos]
+            session_data['videos'] = [vid.to_dict() for vid in self.videos]
         if self.audio is not None:
-            session_data['audio'] = [aud.model_dump() for aud in self.audio]
+            session_data['audio'] = [aud.to_dict() for aud in self.audio]
         return session_data
 
     def _get_team_session(self) -> AgentSession:
@@ -7446,11 +7440,11 @@ class Workflow:
         if self.session_state and len(self.session_state) > 0:
             session_data['session_state'] = self.session_state
         if self.images is not None:
-            session_data['images'] = [img.model_dump() for img in self.images]
+            session_data['images'] = [img.to_dict() for img in self.images]
         if self.videos is not None:
-            session_data['videos'] = [vid.model_dump() for vid in self.videos]
+            session_data['videos'] = [vid.to_dict() for vid in self.videos]
         if self.audio is not None:
-            session_data['audio'] = [aud.model_dump() for aud in self.audio]
+            session_data['audio'] = [aud.to_dict() for aud in self.audio]
         return session_data
 
     def get_workflow_session(self) -> AgentSession:
