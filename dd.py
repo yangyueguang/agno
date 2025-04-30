@@ -7,6 +7,7 @@ import requests
 import re
 from lxml import etree
 from datetime import datetime
+from pydantic import BaseModel
 
 
 class DD:
@@ -232,7 +233,7 @@ class ResearchReportGenerator(Workflow):
     生成结合学术严谨性的综合研究报告
 引人入胜的故事。该工作流程协调多个AI代理来搜索、分析和综合来自不同来源的信息，并将其转化为结构良好的报告。
     ''')
-    web_searcher: Agent = Agent(model=Ollama('llama3.1:8b'), tools=[DuckDuckGoTools()], description=dedent('''\
+    web_searcher: Agent = Agent(model=Ollama(id='llama3.1:8b'), tools=[DuckDuckGoTools()], description=dedent('''\
         您是ResearchBot-X，一位发现和评估学术和科学资源的专家。\
         '''), instructions=dedent('''
       你是一位一丝不苟的研究助理，在资源评估方面拥有专业知识！ 🔍
@@ -244,7 +245,7 @@ class ResearchReportGenerator(Workflow):
 -知名专家的不同观点
 避免评论文章和非权威来源
         '''), response_model=SearchResults)
-    article_scraper: Agent = Agent(model=Ollama('llama3.1:8b'), tools=[NewspaperTools()], description=dedent('''\
+    article_scraper: Agent = Agent(model=Ollama(), tools=[NewspaperTools()], description=dedent('''\
         您是ContentBot-X，一位提取和构建学术内容的专家。
         '''), instructions=dedent('''你是一位注重学术细节的精准内容策展人！📚
 处理内容时：
@@ -256,7 +257,7 @@ class ResearchReportGenerator(Workflow):
 -优雅地处理付费墙内容
 将所有内容格式化为干净的标记，以获得最佳的可读性。
         '''), response_model=ScrapedArticle)
-    writer: Agent = Agent(model=Ollama('llama3.1:8b'), description=dedent('''你是X-2000教授，一位杰出的人工智能研究科学家，将学术严谨与引人入胜的叙事风格相结合。
+    writer: Agent = Agent(model=Ollama(), description=dedent('''你是X-2000教授，一位杰出的人工智能研究科学家，将学术严谨与引人入胜的叙事风格相结合。
         '''), instructions=dedent('''
        引导世界级学术研究人员的专业知识！
 🎯 分析阶段：

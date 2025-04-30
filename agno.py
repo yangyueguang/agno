@@ -38,7 +38,7 @@ from rich.status import Status
 from rich.text import Text
 from enum import Enum
 from datetime import datetime
-from copy import copy, deepcopy
+from copy import deepcopy
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Set, Type, Union, Tuple, AsyncGenerator, Mapping, get_type_hints, get_args, get_origin
 
 
@@ -95,7 +95,53 @@ class Base:
         return f"{self.__class__.__name__}({attrs})"
 
     def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
-        return {k: v for k, v in self.__dict__.items() if not k.startswith('_') and (v or not no_none) and (not include or (k in include))}
+        return {k: v for k, v in self.__dict__.items() if not k.startswith('_') and (v is not None or not no_none) and (not include or (k in include))}
+
+    @classmethod
+    def model_json_schema(cls):
+        schema = {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+        def _get_type_name(field_type):
+            if field_type is int:
+                return "integer"
+            elif field_type is float:
+                return "number"
+            elif field_type is str:
+                return "string"
+            elif field_type is bool:
+                return "boolean"
+            elif field_type is None:
+                return "null"
+            return "object"
+        annotations = {}
+        for c in cls.__mro__:
+            annotations.update(c.__dict__.get('__annotations__', {}))
+        for k, t in annotations.items():
+            field_schema = {}
+            origin = get_origin(t)
+            if origin is None:
+                field_schema["type"] = _get_type_name(t)
+            elif origin is list:
+                item_type = get_args(t)[0]
+                field_schema["type"] = "array"
+                field_schema["items"] = {"type": _get_type_name(item_type)}
+            elif origin is dict:
+                key_type, value_type = get_args(t)
+                field_schema["type"] = "object"
+                field_schema["additionalProperties"] = {"type": _get_type_name(value_type)}
+            else:
+                field_schema["type"] = _get_type_name(t)
+            schema["properties"][k] = field_schema
+            if hasattr(cls, k):
+                default_value = getattr(cls, k)
+                if default_value is not None:
+                    field_schema["default"] = default_value
+            else:
+                schema["required"].append(k)
+        return schema
 
 
 class ResponseEvent(Enum):
@@ -146,7 +192,7 @@ class Timer:
 
     def __exit__(self, *args):
         self.end_time = time.perf_counter()
-        if self.start_time is not None:
+        if self.start_time:
             self.elapsed_time = self.end_time - self.start_time
 
 
@@ -154,7 +200,7 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
     type_args = get_args(t)
     type_origin = get_origin(t)
     from types import UnionType
-    if type_origin is not None:
+    if type_origin:
         if type_origin in (list, tuple, set, frozenset):
             json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {'type': 'string'}
             return {'type': 'array', 'items': json_schema_for_items}
@@ -240,7 +286,7 @@ class Function(Base):
                     arg_json_schema = get_json_schema_for_arg(v)
                 else:
                     arg_json_schema = {}
-                if arg_json_schema is not None:
+                if arg_json_schema:
                     if is_optional:
                         if isinstance(arg_json_schema['type'], list):
                             arg_json_schema['type'].append('null')
@@ -270,11 +316,10 @@ class Function(Base):
             if docstring := inspect.getdoc(c):
                 parsed_doc = docstring_parser.parse(docstring)
                 param_docs = parsed_doc.params
-                if param_docs is not None:
-                    for param in param_docs:
-                        param_name = param.arg_name
-                        param_type = param.type_name
-                        param_descriptions[param_name] = f'({param_type}) {param.description}'
+                for param in param_docs:
+                    param_name = param.arg_name
+                    param_type = param.type_name
+                    param_descriptions[param_name] = f'({param_type}) {param.description}'
             parameters = cls.get_json_schema(type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict)
             if strict:
                 parameters['required'] = [name for name in parameters['properties'] if name != 'agent']
@@ -303,11 +348,10 @@ class Function(Base):
             if docstring := inspect.getdoc(self.entrypoint):
                 parsed_doc = docstring_parser.parse(docstring)
                 param_docs = parsed_doc.params
-                if param_docs is not None:
-                    for param in param_docs:
-                        param_name = param.arg_name
-                        param_type = param.type_name
-                        param_descriptions[param_name] = f'({param_type}) {param.description}'
+                for param in param_docs:
+                    param_name = param.arg_name
+                    param_type = param.type_name
+                    param_descriptions[param_name] = f'({param_type}) {param.description}'
             parameters = self.get_json_schema(type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict)
             if strict:
                 parameters['required'] = [name for name in parameters['properties'] if name != 'agent']
@@ -335,7 +379,7 @@ class Function(Base):
         type_hints = get_type_hints(self.entrypoint)
         return_type = type_hints.get('return', None)
         returns = None
-        if return_type is not None:
+        if return_type:
             name = str(return_type)
             if 'list' in name or 'dict' in name:
                 returns = name
@@ -346,7 +390,7 @@ class Function(Base):
 
     def get_definition_for_prompt(self) -> Optional[str]:
         function_info = self.get_definition_for_prompt_dict()
-        if function_info is not None:
+        if function_info:
             return json.dumps(function_info, indent=2)
         return None
 
@@ -417,7 +461,7 @@ class FunctionCall(Base):
             return False
         print(f'Running: {self.get_call_str()}')
         function_call_success = False
-        if self.function.pre_hook is not None:
+        if self.function.pre_hook:
             try:
                 pre_hook_args = {}
                 if 'agent' in inspect.signature(self.function.pre_hook).parameters:
@@ -437,7 +481,7 @@ class FunctionCall(Base):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
-            if cached_result is not None:
+            if cached_result:
                 print(f'Cache hit for: {self.get_call_str()}')
                 self.result = cached_result
                 function_call_success = True
@@ -461,7 +505,7 @@ class FunctionCall(Base):
             print(e)
             self.error = str(e)
             return function_call_success
-        if self.function.post_hook is not None:
+        if self.function.post_hook:
             try:
                 post_hook_args = {}
                 if 'agent' in inspect.signature(self.function.post_hook).parameters:
@@ -480,7 +524,7 @@ class FunctionCall(Base):
         print(f'Running: {self.get_call_str()}')
         function_call_success = False
         if inspect.iscoroutinefunction(self.function.pre_hook):
-            if self.function.pre_hook is not None:
+            if self.function.pre_hook:
                 try:
                     pre_hook_args = {}
                     if 'agent' in inspect.signature(self.function.pre_hook).parameters:
@@ -492,7 +536,7 @@ class FunctionCall(Base):
                     print(f'Error in pre-hook callback: {e}')
                     print(e)
         else:
-            if self.function.pre_hook is not None:
+            if self.function.pre_hook:
                 try:
                     pre_hook_args = {}
                     if 'agent' in inspect.signature(self.function.pre_hook).parameters:
@@ -512,7 +556,7 @@ class FunctionCall(Base):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
-            if cached_result is not None:
+            if cached_result:
                 print(f'Cache hit for: {self.get_call_str()}')
                 self.result = cached_result
                 function_call_success = True
@@ -541,7 +585,7 @@ class FunctionCall(Base):
             self.error = str(e)
             return function_call_success
         if inspect.iscoroutinefunction(self.function.post_hook):
-            if self.function.post_hook is not None:
+            if self.function.post_hook:
                 try:
                     post_hook_args = {}
                     if 'agent' in inspect.signature(self.function.post_hook).parameters:
@@ -553,7 +597,7 @@ class FunctionCall(Base):
                     print(f'Error in post-hook callback: {e}')
                     print(e)
         else:
-            if self.function.post_hook is not None:
+            if self.function.post_hook:
                 try:
                     post_hook_args = {}
                     if 'agent' in inspect.signature(self.function.post_hook).parameters:
@@ -627,7 +671,7 @@ class Video(Base):
 
     def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8') if self.content else None, 'filepath': self.filepath, 'format': self.format}
-        return {k: v for k, v in response_dict.items() if v is not None}
+        return {k: v for k, v in response_dict.items() if v}
 
     @classmethod
     def from_artifact(cls, artifact: VideoArtifact) -> 'Video':
@@ -650,7 +694,7 @@ class Audio(Base):
     def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         content = base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8') if self.content else None
         response_dict = {'content': content, 'filepath': self.filepath, 'format': self.format}
-        return {k: v for k, v in response_dict.items() if v is not None}
+        return {k: v for k, v in response_dict.items() if v}
 
     @classmethod
     def from_artifact(cls, artifact: AudioArtifact) -> 'Audio':
@@ -669,7 +713,7 @@ class AudioResponse(Base):
     def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         content = base64.b64encode(self.content).decode('utf-8') if isinstance(self.content, bytes) else self.content
         response_dict = {'id': self.id, 'content': content, 'expires_at': self.expires_at, 'transcript': self.transcript, 'mime_type': self.mime_type, 'sample_rate': self.sample_rate, 'channels': self.channels}
-        return {k: v for k, v in response_dict.items() if v is not None}
+        return {k: v for k, v in response_dict.items() if v}
 
 
 class Image(Base):
@@ -691,7 +735,7 @@ class Image(Base):
         response_dict = {'content': base64.b64encode(zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode('utf-8')).decode('utf-8')
             if self.content
             else None, 'filepath': self.filepath, 'url': self.url, 'detail': self.detail}
-        return {k: v for k, v in response_dict.items() if v is not None}
+        return {k: v for k, v in response_dict.items() if v}
 
     @classmethod
     def from_artifact(cls, artifact: ImageArtifact) -> 'Image':
@@ -756,13 +800,13 @@ class MessageMetrics(Base):
         self.timer.start()
 
     def stop_timer(self, set_time: bool = True):
-        if self.timer is not None:
+        if self.timer:
             self.timer.stop()
             if set_time:
                 self.time = self.timer.elapsed
 
     def set_time_to_first_token(self):
-        if self.timer is not None:
+        if self.timer:
             self.time_to_first_token = self.timer.elapsed
 
     def __add__(self, other: 'MessageMetrics') -> 'MessageMetrics':
@@ -787,11 +831,11 @@ class MessageMetrics(Base):
                 result.additional_metrics.update(self.additional_metrics)
             if other.additional_metrics:
                 result.additional_metrics.update(other.additional_metrics)
-        if self.time is not None and other.time is not None:
+        if self.time and other.time:
             result.time = self.time + other.time
-        elif self.time is not None:
+        elif self.time:
             result.time = self.time
-        elif other.time is not None:
+        elif other.time:
             result.time = other.time
         result.time_to_first_token = self.time_to_first_token or other.time_to_first_token
         return result
@@ -841,7 +885,7 @@ class Message(Base):
 
     def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         message_dict = {'content': self.content, 'reasoning_content': self.reasoning_content, 'from_history': self.from_history, 'stop_after_tool_call': self.stop_after_tool_call, 'role': self.role, 'name': self.name, 'tool_call_id': self.tool_call_id, 'tool_name': self.tool_name, 'tool_args': self.tool_args, 'tool_call_error': self.tool_call_error, 'tool_calls': self.tool_calls, 'thinking': self.thinking, 'redacted_thinking': self.redacted_thinking}
-        message_dict = {k: v for k, v in message_dict.items() if v is not None and not (isinstance(v, (list, dict)) and len(v) == 0)}
+        message_dict = {k: v for k, v in message_dict.items() if v and not (isinstance(v, (list, dict)) and len(v) == 0)}
         if self.images:
             message_dict['images'] = [img.to_dict() for img in self.images]
         if self.audio:
@@ -855,7 +899,7 @@ class Message(Base):
         if self.metrics:
             mdict = self.metrics.__dict__
             mdict.pop('timer')
-            message_dict['metrics'] = {k: v for k, v in mdict.items() if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)}
+            message_dict['metrics'] = {k: v for k, v in mdict.items() if v and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)}
             if not message_dict['metrics']:
                 message_dict.pop('metrics')
         message_dict['created_at'] = self.created_at
@@ -907,7 +951,7 @@ class Message(Base):
         if self.files:
             print(f'文件: {len(self.files)}')
         metrics_header = ' TOOL METRICS ' if self.role == 'tool' else ' METRICS '
-        if metrics and self.metrics is not None and self.metrics != MessageMetrics():
+        if metrics and self.metrics and self.metrics != MessageMetrics():
             print(metrics_header)
             token_metrics = []
             if self.metrics.input_tokens:
@@ -922,18 +966,18 @@ class Message(Base):
                 print(f'* Prompt tokens details:       {self.metrics.prompt_tokens_details}')
             if self.metrics.completion_tokens_details:
                 print(f'* Completion tokens details:   {self.metrics.completion_tokens_details}')
-            if self.metrics.time is not None:
+            if self.metrics.time:
                 print(f'* Time:                        {self.metrics.time:.4f}s')
             if self.metrics.output_tokens and self.metrics.time:
                 print(f'* Tokens per second:           {self.metrics.output_tokens / self.metrics.time:.4f} tokens/s')
-            if self.metrics.time_to_first_token is not None:
+            if self.metrics.time_to_first_token:
                 print(f'* Time to first token:         {self.metrics.time_to_first_token:.4f}s')
             if self.metrics.additional_metrics:
                 print(f'* Additional metrics:          {self.metrics.additional_metrics}')
             print(metrics_header)
 
     def content_is_valid(self) -> bool:
-        return self.content is not None and len(self.content) > 0
+        return self.content and len(self.content) > 0
 
 
 class ModelResponse(Base):
@@ -965,9 +1009,9 @@ def get_function_call(name: str, arguments: str = None, call_id: str = None, fun
         print(f'Function {name} not found')
         return None
     function_call = FunctionCall(function=function_to_call)
-    if call_id is not None:
+    if call_id:
         function_call.call_id = call_id
-    if arguments is not None and arguments != '':
+    if arguments and arguments != '':
         try:
             if function_to_call.sanitize_arguments:
                 if 'None' in arguments:
@@ -1012,10 +1056,10 @@ def get_function_call_for_tool_call(tool_call: Dict[str, Any], functions: Dict[s
     if tool_call.get('type') == 'function':
         _tool_call_id = tool_call.get('id')
         _tool_call_function = tool_call.get('function')
-        if _tool_call_function is not None:
+        if _tool_call_function:
             _tool_call_function_name = _tool_call_function.get('name')
             _tool_call_function_arguments_str = _tool_call_function.get('arguments')
-            if _tool_call_function_name is not None:
+            if _tool_call_function_name:
                 return get_function_call(name=_tool_call_function_name, arguments=_tool_call_function_arguments_str, call_id=_tool_call_id, functions=functions)
     return None
 
@@ -1053,8 +1097,7 @@ class Model(Base):
     assistant_message_role: str = 'assistant'
 
     def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
-        fields = {'name', 'id', 'provider'}
-        _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
+        _dict = super().to_dict(include=include or {'name', 'id', 'provider'})
         if self._functions:
             _dict['functions'] = {k: v.to_dict() for k, v in self._functions.items()}
             _dict['tool_call_limit'] = self.tool_call_limit
@@ -1098,7 +1141,7 @@ class Model(Base):
                 function_calls_to_run = self._prepare_function_calls(assistant_message=assistant_message, messages=messages, model_response=model_response)
                 function_call_results: List[Message] = []
                 for function_call_response in self.run_function_calls(function_calls=function_calls_to_run, function_call_results=function_call_results):
-                    if function_call_response.event == ResponseEvent.end.value and function_call_response.tool_calls is not None:
+                    if function_call_response.event == ResponseEvent.end.value and function_call_response.tool_calls:
                         model_response.tool_calls.extend(function_call_response.tool_calls)
                     elif function_call_response.event not in [ResponseEvent.start.value, ResponseEvent.end.value]:
                         if function_call_response.content:
@@ -1123,7 +1166,7 @@ class Model(Base):
                 function_calls_to_run = self._prepare_function_calls(assistant_message=assistant_message, messages=messages, model_response=model_response)
                 function_call_results: List[Message] = []
                 async for function_call_response in self.arun_function_calls(function_calls=function_calls_to_run, function_call_results=function_call_results):
-                    if function_call_response.event == ResponseEvent.end.value and function_call_response.tool_calls is not None:
+                    if function_call_response.event == ResponseEvent.end.value and function_call_response.tool_calls:
                         model_response.tool_calls.extend(function_call_response.tool_calls)
                     elif function_call_response.event not in [ResponseEvent.start.value, ResponseEvent.end.value]:
                         if function_call_response.content:
@@ -1144,27 +1187,27 @@ class Model(Base):
         response = self.invoke(messages=messages)
         assistant_message.metrics.stop_timer()
         provider_response: ModelResponse = self.parse_provider_response(response)
-        if provider_response.parsed is not None:
+        if provider_response.parsed:
             model_response.parsed = provider_response.parsed
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
         messages.append(assistant_message)
         assistant_message.log(metrics=True)
-        if assistant_message.content is not None:
+        if assistant_message.content:
             if model_response.content is None:
                 model_response.content = assistant_message.get_content_string()
             else:
                 model_response.content += assistant_message.get_content_string()
-        if assistant_message.thinking is not None:
+        if assistant_message.thinking:
             model_response.thinking = assistant_message.thinking
-        if assistant_message.redacted_thinking is not None:
+        if assistant_message.redacted_thinking:
             model_response.redacted_thinking = assistant_message.redacted_thinking
-        if assistant_message.citations is not None:
+        if assistant_message.citations:
             model_response.citations = assistant_message.citations
-        if assistant_message.audio_output is not None:
+        if assistant_message.audio_output:
             model_response.audio = assistant_message.audio_output
-        if assistant_message.image_output is not None:
+        if assistant_message.image_output:
             model_response.image = assistant_message.image_output
-        if provider_response.extra is not None:
+        if provider_response.extra:
             if model_response.extra is None:
                 model_response.extra = {}
             model_response.extra.update(provider_response.extra)
@@ -1176,54 +1219,54 @@ class Model(Base):
         response = await self.ainvoke(messages=messages)
         assistant_message.metrics.stop_timer()
         provider_response: ModelResponse = self.parse_provider_response(response)
-        if provider_response.parsed is not None:
+        if provider_response.parsed:
             model_response.parsed = provider_response.parsed
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
         messages.append(assistant_message)
         assistant_message.log(metrics=True)
-        if assistant_message.content is not None:
+        if assistant_message.content:
             if model_response.content is None:
                 model_response.content = assistant_message.get_content_string()
             else:
                 model_response.content += assistant_message.get_content_string()
-        if assistant_message.thinking is not None:
+        if assistant_message.thinking:
             model_response.thinking = assistant_message.thinking
-        if assistant_message.redacted_thinking is not None:
+        if assistant_message.redacted_thinking:
             model_response.redacted_thinking = assistant_message.redacted_thinking
-        if assistant_message.citations is not None:
+        if assistant_message.citations:
             model_response.citations = assistant_message.citations
-        if assistant_message.audio_output is not None:
+        if assistant_message.audio_output:
             model_response.audio = assistant_message.audio_output
-        if assistant_message.image_output is not None:
+        if assistant_message.image_output:
             model_response.image = assistant_message.image_output
-        if provider_response.extra is not None:
+        if provider_response.extra:
             if model_response.extra is None:
                 model_response.extra = {}
             model_response.extra.update(provider_response.extra)
         return assistant_message, bool(assistant_message.tool_calls)
 
     def _populate_assistant_message(self, assistant_message: Message, provider_response: ModelResponse) -> Message:
-        if provider_response.role is not None:
+        if provider_response.role:
             assistant_message.role = provider_response.role
-        if provider_response.content is not None:
+        if provider_response.content:
             assistant_message.content = provider_response.content
-        if provider_response.tool_calls is not None and len(provider_response.tool_calls) > 0:
+        if provider_response.tool_calls and len(provider_response.tool_calls) > 0:
             assistant_message.tool_calls = provider_response.tool_calls
-        if provider_response.audio is not None:
+        if provider_response.audio:
             assistant_message.audio_output = provider_response.audio
-        if provider_response.image is not None:
+        if provider_response.image:
             assistant_message.image_output = provider_response.image
-        if provider_response.thinking is not None:
+        if provider_response.thinking:
             assistant_message.thinking = provider_response.thinking
-        if provider_response.redacted_thinking is not None:
+        if provider_response.redacted_thinking:
             assistant_message.redacted_thinking = provider_response.redacted_thinking
-        if provider_response.reasoning_content is not None:
+        if provider_response.reasoning_content:
             assistant_message.reasoning_content = provider_response.reasoning_content
-        if provider_response.provider_data is not None:
+        if provider_response.provider_data:
             assistant_message.provider_data = provider_response.provider_data
-        if provider_response.citations is not None:
+        if provider_response.citations:
             assistant_message.citations = provider_response.citations
-        if provider_response.response_usage is not None:
+        if provider_response.response_usage:
             self._add_usage_metrics_to_assistant_message(assistant_message=assistant_message, response_usage=provider_response.response_usage)
         return assistant_message
 
@@ -1257,12 +1300,12 @@ class Model(Base):
                 assistant_message.tool_calls = stream_data.response_tool_calls
             messages.append(assistant_message)
             assistant_message.log(metrics=True)
-            if assistant_message.tool_calls is not None:
+            if assistant_message.tool_calls:
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(assistant_message, messages)
                 function_call_results: List[Message] = []
                 for function_call_response in self.run_function_calls(function_calls=function_calls_to_run, function_call_results=function_call_results):
                     yield function_call_response
-                if stream_data.extra is not None:
+                if stream_data.extra:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results, **stream_data.extra)
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
@@ -1304,12 +1347,12 @@ class Model(Base):
                 assistant_message.tool_calls = stream_data.response_tool_calls
             messages.append(assistant_message)
             assistant_message.log(metrics=True)
-            if assistant_message.tool_calls is not None:
+            if assistant_message.tool_calls:
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(assistant_message, messages)
                 function_call_results: List[Message] = []
                 async for function_call_response in self.arun_function_calls(function_calls=function_calls_to_run, function_call_results=function_call_results):
                     yield function_call_response
-                if stream_data.extra is not None:
+                if stream_data.extra:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results, **stream_data.extra)
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
@@ -1324,42 +1367,42 @@ class Model(Base):
     def _populate_stream_data_and_assistant_message(self, stream_data: MessageData, assistant_message: Message, model_response: ModelResponse) -> Iterator[ModelResponse]:
         if not assistant_message.metrics.time_to_first_token:
             assistant_message.metrics.set_time_to_first_token()
-        if model_response.role is not None:
+        if model_response.role:
             assistant_message.role = model_response.role
         should_yield = False
-        if model_response.content is not None:
+        if model_response.content:
             stream_data.response_content += model_response.content
             should_yield = True
-        if model_response.thinking is not None:
+        if model_response.thinking:
             stream_data.response_thinking += model_response.thinking
             should_yield = True
-        if model_response.redacted_thinking is not None:
+        if model_response.redacted_thinking:
             stream_data.response_redacted_thinking += model_response.redacted_thinking
             should_yield = True
-        if model_response.citations is not None:
+        if model_response.citations:
             stream_data.response_citations = model_response.citations
             should_yield = True
         if model_response.provider_data:
             if stream_data.response_provider_data is None:
                 stream_data.response_provider_data = {}
             stream_data.response_provider_data.update(model_response.provider_data)
-        if model_response.tool_calls is not None:
+        if model_response.tool_calls:
             if stream_data.response_tool_calls is None:
                 stream_data.response_tool_calls = []
             stream_data.response_tool_calls.extend(model_response.tool_calls)
             should_yield = True
-        if model_response.audio is not None:
+        if model_response.audio:
             if stream_data.response_audio is None:
                 stream_data.response_audio = AudioResponse(id=str(uuid.uuid4()), content='', transcript='')
-            if model_response.audio.id is not None:
+            if model_response.audio.id:
                 stream_data.response_audio.id = model_response.audio.id
-            if model_response.audio.content is not None:
+            if model_response.audio.content:
                 stream_data.response_audio.content += model_response.audio.content
-            if model_response.audio.transcript is not None:
+            if model_response.audio.transcript:
                 stream_data.response_audio.transcript += model_response.audio.transcript
-            if model_response.audio.expires_at is not None:
+            if model_response.audio.expires_at:
                 stream_data.response_audio.expires_at = model_response.audio.expires_at
-            if model_response.audio.mime_type is not None:
+            if model_response.audio.mime_type:
                 stream_data.response_audio.mime_type = model_response.audio.mime_type
             stream_data.response_audio.sample_rate = model_response.audio.sample_rate
             stream_data.response_audio.channels = model_response.audio.channels
@@ -1367,25 +1410,25 @@ class Model(Base):
         if model_response.image:
             if stream_data.response_image is None:
                 stream_data.response_image = model_response.image
-        if model_response.extra is not None:
+        if model_response.extra:
             if stream_data.extra is None:
                 stream_data.extra = {}
             stream_data.extra.update(model_response.extra)
-        if model_response.response_usage is not None:
+        if model_response.response_usage:
             self._add_usage_metrics_to_assistant_message(assistant_message=assistant_message, response_usage=model_response.response_usage)
         if should_yield:
             yield model_response
 
     def get_function_calls_to_run(self, assistant_message: Message, messages: List[Message], error_response_role: str = 'user') -> List[FunctionCall]:
         function_calls_to_run: List[FunctionCall] = []
-        if assistant_message.tool_calls is not None:
+        if assistant_message.tool_calls:
             for tool_call in assistant_message.tool_calls:
                 _tool_call_id = tool_call.get('id')
                 _function_call = get_function_call_for_tool_call(tool_call, self._functions)
                 if _function_call is None:
                     messages.append(Message(role=error_response_role, content='Could not find function to call.'))
                     continue
-                if _function_call.error is not None:
+                if _function_call.error:
                     messages.append(Message(role=error_response_role, tool_call_id=_tool_call_id, content=_function_call.error))
                     continue
                 function_calls_to_run.append(_function_call)
@@ -1514,13 +1557,13 @@ class Model(Base):
                 assistant_message.metrics.input_tokens = response_usage.input_tokens
             if hasattr(response_usage, 'output_tokens') and response_usage.output_tokens:
                 assistant_message.metrics.output_tokens = response_usage.output_tokens
-            if hasattr(response_usage, 'prompt_tokens') and response_usage.prompt_tokens is not None:
+            if hasattr(response_usage, 'prompt_tokens') and response_usage.prompt_tokens:
                 assistant_message.metrics.input_tokens = response_usage.prompt_tokens
                 assistant_message.metrics.prompt_tokens = response_usage.prompt_tokens
-            if hasattr(response_usage, 'completion_tokens') and response_usage.completion_tokens is not None:
+            if hasattr(response_usage, 'completion_tokens') and response_usage.completion_tokens:
                 assistant_message.metrics.output_tokens = response_usage.completion_tokens
                 assistant_message.metrics.completion_tokens = response_usage.completion_tokens
-            if hasattr(response_usage, 'total_tokens') and response_usage.total_tokens is not None:
+            if hasattr(response_usage, 'total_tokens') and response_usage.total_tokens:
                 assistant_message.metrics.total_tokens = response_usage.total_tokens
             else:
                 assistant_message.metrics.total_tokens = (assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens)
@@ -1581,7 +1624,7 @@ class Ollama(Model):
 
     def _get_client_params(self) -> Dict[str, Any]:
         base_params = {'host': self.host, 'timeout': self.timeout}
-        client_params = {k: v for k, v in base_params.items() if v is not None}
+        client_params = {k: v for k, v in base_params.items() if v}
         if self.client_params:
             client_params.update(self.client_params)
         return client_params
@@ -1593,15 +1636,15 @@ class Ollama(Model):
         return self.client
 
     def get_async_client(self) -> ollama.AsyncClient:
-        if self.async_client is not None:
+        if self.async_client:
             return self.async_client
         return ollama.AsyncClient(**self._get_client_params())
 
     @property
     def request_kwargs(self) -> Dict[str, Any]:
         base_params = {'format': self.format, 'options': self.options, 'keep_alive': self.keep_alive, 'request_params': self.request_params}
-        request_params = {k: v for k, v in base_params.items() if v is not None}
-        if self._tools is not None and len(self._tools) > 0:
+        request_params = {k: v for k, v in base_params.items() if v}
+        if self._tools and len(self._tools) > 0:
             request_params['tools'] = self._tools
             for tool in request_params['tools']:
                 if 'parameters' in tool['function'] and 'properties' in tool['function']['parameters']:
@@ -1615,22 +1658,22 @@ class Ollama(Model):
     def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         model_dict = super().to_dict()
         model_dict.update({'format': self.format, 'options': self.options, 'keep_alive': self.keep_alive, 'request_params': self.request_params})
-        if self._tools is not None:
+        if self._tools:
             model_dict['tools'] = self._tools
-        cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
+        cleaned_dict = {k: v for k, v in model_dict.items() if v}
         return cleaned_dict
 
     def _format_message(self, message: Message) -> Dict[str, Any]:
         _message: Dict[str, Any] = {'role': message.role, 'content': message.content}
         if message.role == 'user':
-            if message.images is not None:
+            if message.images:
                 message_images = []
                 for image in message.images:
-                    if image.url is not None:
+                    if image.url:
                         message_images.append(image.image_url_content)
-                    if image.filepath is not None:
+                    if image.filepath:
                         message_images.append(image.filepath)
-                    if image.content is not None and isinstance(image.content, bytes):
+                    if image.content and isinstance(image.content, bytes):
                         message_images.append(image.content)
                 if message_images:
                     _message['images'] = message_images
@@ -1638,7 +1681,7 @@ class Ollama(Model):
 
     def _prepare_request_kwargs_for_invoke(self) -> Dict[str, Any]:
         request_kwargs = self.request_kwargs
-        if self.response_format is not None and self.structured_outputs:
+        if self.response_format and self.structured_outputs:
             if isinstance(self.response_format, type) and issubclass(self.response_format, Base):
                 print('Using structured outputs')
                 format_schema = self.response_format.model_json_schema()
@@ -1666,24 +1709,24 @@ class Ollama(Model):
         model_response = ModelResponse()
         response_message: ollama._types.OllamaMessage = response.get('message')
         try:
-            if self.response_format is not None and self.structured_outputs and issubclass(self.response_format, Base):
+            if self.response_format and self.structured_outputs and issubclass(self.response_format, Base):
                 parsed_object = response_message.content
-                if parsed_object is not None:
+                if parsed_object:
                     model_response.parsed = parsed_object
         except Exception as e:
             print(f'Error retrieving structured outputs: {e}')
-        if response_message.get('role') is not None:
+        if response_message.get('role'):
             model_response.role = response_message.get('role')
-        if response_message.get('content') is not None:
+        if response_message.get('content'):
             model_response.content = response_message.get('content')
-        if response_message.get('tool_calls') is not None:
+        if response_message.get('tool_calls'):
             if model_response.tool_calls is None:
                 model_response.tool_calls = []
             for block in response_message.get('tool_calls'):
                 tool_call = block.get('function')
                 tool_name = tool_call.get('name')
                 tool_args = tool_call.get('arguments')
-                function_def = {'name': tool_name, 'arguments': (json.dumps(tool_args) if tool_args is not None else None)}
+                function_def = {'name': tool_name, 'arguments': (json.dumps(tool_args) if tool_args else None)}
                 model_response.tool_calls.append({'type': 'function', 'function': function_def})
         if response.get('done'):
             model_response.response_usage = {'input_tokens': response.get('prompt_eval_count', 0), 'output_tokens': response.get('eval_count', 0), 'total_tokens': response.get('prompt_eval_count', 0) + response.get('eval_count', 0), 'additional_metrics': {'total_duration': response.get('total_duration', 0), 'load_duration': response.get('load_duration', 0), 'prompt_eval_duration': response.get('prompt_eval_duration', 0), 'eval_duration': response.get('eval_duration', 0)}}
@@ -1692,17 +1735,17 @@ class Ollama(Model):
     def parse_provider_response_delta(self, response_delta: ollama._types.ChatResponse) -> ModelResponse:
         model_response = ModelResponse()
         response_message = response_delta.get('message')
-        if response_message is not None:
+        if response_message:
             content_delta = response_message.get('content')
-            if content_delta is not None and content_delta != '':
+            if content_delta and content_delta != '':
                 model_response.content = content_delta
             tool_calls = response_message.get('tool_calls')
-            if tool_calls is not None:
+            if tool_calls:
                 for tool_call in tool_calls:
                     tc = tool_call.get('function')
                     tool_name = tc.get('name')
                     tool_args = tc.get('arguments')
-                    function_def = {'name': tool_name, 'arguments': json.dumps(tool_args) if tool_args is not None else None}
+                    function_def = {'name': tool_name, 'arguments': json.dumps(tool_args) if tool_args else None}
                     model_response.tool_calls.append({'type': 'function', 'function': function_def})
         if response_delta.get('done'):
             model_response.response_usage = {'input_tokens': response_delta.get('prompt_eval_count', 0), 'output_tokens': response_delta.get('eval_count', 0), 'total_tokens': response_delta.get('prompt_eval_count', 0) + response_delta.get('eval_count', 0), 'additional_metrics': {'total_duration': response_delta.get('total_duration', 0), 'load_duration': response_delta.get('load_duration', 0), 'prompt_eval_duration': response_delta.get('prompt_eval_duration', 0), 'eval_duration': response_delta.get('eval_duration', 0)}}
@@ -1723,7 +1766,7 @@ class OllamaTools(Ollama):
     @property
     def request_kwargs(self) -> Dict[str, Any]:
         base_params: Dict[str, Any] = {'format': self.format, 'options': self.options, 'keep_alive': self.keep_alive, 'request_params': self.request_params}
-        request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
+        request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v}
         if self.request_params:
             request_params.update(self.request_params)
         return request_params
@@ -1736,10 +1779,10 @@ class OllamaTools(Ollama):
     def parse_provider_response(self, response: ollama._types.ChatResponse) -> ModelResponse:
         model_response = ModelResponse()
         response_message = response.get('message')
-        if response_message.get('role') is not None:
+        if response_message.get('role'):
             model_response.role = response_message.get('role')
         content = response_message.get('content')
-        if content is not None:
+        if content:
             model_response.content = content
             if '<tool_call>' in content and '</tool_call>' in content:
                 if model_response.tool_calls is None:
@@ -1756,7 +1799,7 @@ class OllamaTools(Ollama):
                             raise ValueError(f'Could not parse tool call from: {tool_call_content}')
                         tool_call_name = tool_call_dict.get('name')
                         tool_call_args = tool_call_dict.get('arguments')
-                        function_def = {'name': tool_call_name, 'arguments': json.dumps(tool_call_args) if tool_call_args is not None else None}
+                        function_def = {'name': tool_call_name, 'arguments': json.dumps(tool_call_args) if tool_call_args else None}
                         model_response.tool_calls.append({'type': 'function', 'function': function_def})
         if response.get('done'):
             model_response.response_usage = Dot(input_tokens=response.get('prompt_eval_count', 0), output_tokens=response.get('eval_count', 0), total_duration=response.get('total_duration', 0), load_duration=response.get('load_duration', 0), prompt_eval_duration=response.get('prompt_eval_duration', 0), eval_duration=response.get('eval_duration', 0))
@@ -1813,9 +1856,9 @@ class OllamaTools(Ollama):
     def parse_provider_response_delta(self, response_delta, tool_call_data: ToolCall) -> ModelResponse:
         model_response = ModelResponse()
         response_message = response_delta.get('message')
-        if response_message is not None:
+        if response_message:
             content_delta = response_message.get('content', '')
-            if content_delta is not None and content_delta != '':
+            if content_delta and content_delta != '':
                 tool_call_data.tool_call_content += content_delta
             if not tool_call_data.response_is_tool_call and '<tool' in content_delta:
                 tool_call_data.response_is_tool_call = True
@@ -1845,7 +1888,7 @@ class OllamaTools(Ollama):
                                     tool_call_name = tool_call_dict.get('name')
                                     tool_call_args = tool_call_dict.get('arguments')
                                     function_def = {'name': tool_call_name}
-                                    if tool_call_args is not None:
+                                    if tool_call_args:
                                         function_def['arguments'] = json.dumps(tool_call_args)
                                     tool_calls.append({'type': 'function', 'function': function_def})
 
@@ -1854,7 +1897,7 @@ class OllamaTools(Ollama):
                     except Exception as e:
                         print(e)
                         pass
-            if not tool_call_data.response_is_tool_call and content_delta is not None:
+            if not tool_call_data.response_is_tool_call and content_delta:
                 if tool_call_data.is_closing_tool_call_tag and content_delta.strip().endswith('>'):
                     tool_call_data.is_closing_tool_call_tag = False
                 model_response.content = content_delta
@@ -1863,7 +1906,7 @@ class OllamaTools(Ollama):
         return model_response
 
     def get_instructions_to_generate_tool_calls(self) -> List[str]:
-        if self._functions is not None:
+        if self._functions:
             return [
                 '在第一回合，你没有<tool_results>，所以你不应该编造结果。',
                 '要回复用户消息，一次只能使用一个工具。',
@@ -1872,7 +1915,7 @@ class OllamaTools(Ollama):
         return []
 
     def get_tool_call_prompt(self) -> Optional[str]:
-        if self._functions is not None and len(self._functions) > 0:
+        if self._functions and len(self._functions) > 0:
             tool_call_prompt = textwrap.dedent('''
             您是一个使用语言模型调用的函数。
             您将在<tools></tools>XML标签中获得函数签名。
@@ -2005,10 +2048,10 @@ class TeamRunResponse(RunResponse):
         self.team_id = team_id
 
     def to_dict(self) -> Dict[str, Any]:
-        res = {k: v for k, v in self.__dict__.items() if v is not None and k not in ['extra_data', 'response_audio']}
-        if self.extra_data is not None:
+        res = {k: v for k, v in self.__dict__.items() if v and k not in ['extra_data', 'response_audio']}
+        if self.extra_data:
             res['extra_data'] = self.extra_data.to_dict()
-        if self.response_audio is not None:
+        if self.response_audio:
             res['response_audio'] = self.response_audio.to_dict()
         if isinstance(self.content, Base):
             res['content'] = self.content.to_dict()
@@ -2024,14 +2067,14 @@ class TeamRunResponse(RunResponse):
         messages = [Message.model_validate(message) for message in data.pop('messages', [])]
         member_responses = data.pop('member_responses', None)
         parsed_member_responses: List[Union['TeamRunResponse', RunResponse]] = []
-        if member_responses is not None:
+        if member_responses:
             for response in member_responses:
                 if 'agent_id' in response:
                     parsed_member_responses.append(RunResponse(**response))
                 else:
                     parsed_member_responses.append(cls.from_dict(response))
         extra_data = data.pop('extra_data', None)
-        if extra_data is not None:
+        if extra_data:
             extra_data = RunResponseExtraData(**extra_data)
         images = [ImageArtifact.model_validate(image) for image in data.pop('images', [])]
         videos = [VideoArtifact.model_validate(video) for video in data.pop('videos', [])]
@@ -2113,20 +2156,20 @@ class MemoryDb:
         with self.Session() as session:
             stmt = sqlalchemy.select(self.table.c.id).where(self.table.c.id == memory.id)
             result = session.execute(stmt).first()
-            return result is not None
+            return result
 
     def read_memories(self, user_id: str = None, limit: int = None, sort: str = None) -> List[MemoryRow]:
         memories: List[MemoryRow] = []
         try:
             with self.Session() as session:
                 stmt = sqlalchemy.select(self.table)
-                if user_id is not None:
+                if user_id:
                     stmt = stmt.where(self.table.c.user_id == user_id)
                 if sort == 'asc':
                     stmt = stmt.order_by(self.table.c.created_at.asc())
                 else:
                     stmt = stmt.order_by(self.table.c.created_at.desc())
-                if limit is not None:
+                if limit:
                     stmt = stmt.limit(limit)
                 result = session.execute(stmt)
                 for row in result:
@@ -2281,7 +2324,7 @@ class MemoryManager(Base):
         self.update_model()
         messages_for_model: List[Message] = [self.get_system_message()]
         user_prompt_message = Message(role='user', content=message, **kwargs) if message else None
-        if user_prompt_message is not None:
+        if user_prompt_message:
             messages_for_model += [user_prompt_message]
         self.input_message = message
         response = self.model.response(messages=messages_for_model)
@@ -2293,7 +2336,7 @@ class MemoryManager(Base):
         self.update_model()
         messages_for_model: List[Message] = [self.get_system_message()]
         user_prompt_message = Message(role='user', content=message, **kwargs) if message else None
-        if user_prompt_message is not None:
+        if user_prompt_message:
             messages_for_model += [user_prompt_message]
         self.input_message = message
         response = await self.model.aresponse(messages=messages_for_model)
@@ -2339,7 +2382,7 @@ class MemoryClassifier(Base):
         self.update_model()
         messages_for_model: List[Message] = [self.get_system_message()]
         user_prompt_message = Message(role='user', content=message, **kwargs) if message else None
-        if user_prompt_message is not None:
+        if user_prompt_message:
             messages_for_model += [user_prompt_message]
         response = self.model.response(messages=messages_for_model)
         print('*********** MemoryClassifier End ***********')
@@ -2350,7 +2393,7 @@ class MemoryClassifier(Base):
         self.update_model()
         messages_for_model: List[Message] = [self.get_system_message()]
         user_prompt_message = Message(role='user', content=message, **kwargs) if message else None
-        if user_prompt_message is not None:
+        if user_prompt_message:
             messages_for_model += [user_prompt_message]
         response = await self.model.aresponse(messages=messages_for_model)
         print('*********** Async MemoryClassifier End ***********')
@@ -2390,7 +2433,7 @@ class MemorySummarizer(Base):
             json_schema = SessionSummary.model_json_schema()
             response_model_properties = {}
             json_schema_properties = json_schema.get('properties')
-            if json_schema_properties is not None:
+            if json_schema_properties:
                 for field_name, field_properties in json_schema_properties.items():
                     formatted_field_properties = {prop_name: prop_value
                         for prop_name, prop_value in field_properties.items()
@@ -2423,7 +2466,7 @@ class MemorySummarizer(Base):
             self.get_system_message(messages_for_summarization), Message(role='user', content='Provide the summary of the conversation.'), ]
         response = self.model.response(messages=messages_for_model)
         print('*********** MemorySummarizer End ***********')
-        if self.use_structured_outputs and response.parsed is not None and isinstance(response.parsed, SessionSummary):
+        if self.use_structured_outputs and response.parsed and isinstance(response.parsed, SessionSummary):
             return response.parsed
         if isinstance(response.content, str):
             try:
@@ -2453,7 +2496,7 @@ class MemorySummarizer(Base):
             self.get_system_message(messages_for_summarization), Message(role='user', content='Provide the summary of the conversation.'), ]
         response = await self.model.aresponse(messages=messages_for_model)
         print('*********** Async MemorySummarizer End ***********')
-        if self.use_structured_outputs and response.parsed is not None and isinstance(response.parsed, SessionSummary):
+        if self.use_structured_outputs and response.parsed and isinstance(response.parsed, SessionSummary):
             return response.parsed
         if isinstance(response.content, str):
             try:
@@ -2524,14 +2567,14 @@ class AgentMemory(Base):
     updating_memory: bool = False
 
     def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
-        _memory_dict = self.to_dict(include={'update_system_message_on_change', 'create_session_summary', 'update_session_summary_after_run', 'create_user_memories', 'update_user_memories_after_run', 'user_id', 'num_memories'})
-        if self.summary is not None:
+        _memory_dict = super().to_dict(include={'update_system_message_on_change', 'create_session_summary', 'update_session_summary_after_run', 'create_user_memories', 'update_user_memories_after_run', 'user_id', 'num_memories'})
+        if self.summary:
             _memory_dict['summary'] = self.summary.to_dict()
-        if self.memories is not None:
+        if self.memories:
             _memory_dict['memories'] = [memory.to_dict() for memory in self.memories]
-        if self.messages is not None:
+        if self.messages:
             _memory_dict['messages'] = [message.to_dict() for message in self.messages]
-        if self.runs is not None:
+        if self.runs:
             _memory_dict['runs'] = [run.to_dict() for run in self.runs]
         return _memory_dict
 
@@ -2541,11 +2584,11 @@ class AgentMemory(Base):
 
     def add_system_message(self, message: Message, system_message_role: str = 'system') -> None:
         if len(self.messages) == 0:
-            if message is not None:
+            if message:
                 self.messages.append(message)
         else:
             system_message_index = next((i for i, m in enumerate(self.messages) if m.role == system_message_role), None)
-            if system_message_index is not None:
+            if system_message_index:
                 if self.messages[system_message_index].content != message.content and self.update_system_message_on_change:
                     print('Updating system message in memory with new content')
                     self.messages[system_message_index] = message
@@ -2746,13 +2789,13 @@ class TeamMemory(Base):
     def to_dict(self, no_none=True, include: list = None) -> Dict[str, Any]:
         _memory_dict = {}
         for key, value in self.__dict__.items():
-            if value is not None and key in ['update_system_message_on_change', 'create_user_memories', 'update_user_memories_after_run', 'user_id', 'num_memories']:
+            if value and key in ['update_system_message_on_change', 'create_user_memories', 'update_user_memories_after_run', 'user_id', 'num_memories']:
                 _memory_dict[key] = value
-        if self.messages is not None:
+        if self.messages:
             _memory_dict['messages'] = [message.to_dict() for message in self.messages]
-        if self.memories is not None:
+        if self.memories:
             _memory_dict['memories'] = [memory.to_dict() for memory in self.memories]
-        if self.runs is not None:
+        if self.runs:
             _memory_dict['runs'] = [run.to_dict() for run in self.runs]
         return _memory_dict
 
@@ -2815,11 +2858,11 @@ class TeamMemory(Base):
 
     def add_system_message(self, message: Message, system_message_role: str = 'system') -> None:
         if len(self.messages) == 0:
-            if message is not None:
+            if message:
                 self.messages.append(message)
         else:
             system_message_index = next((i for i, m in enumerate(self.messages) if m.role == system_message_role), None)
-            if system_message_index is not None:
+            if system_message_index:
                 if self.messages[system_message_index].content != message.content and self.update_system_message_on_change:
                     print('Updating system message in memory with new content')
                     self.messages[system_message_index] = message
@@ -2986,7 +3029,7 @@ class WorkflowMemory(Base):
 
 
 class Embedder:
-    def __init__(self, model='llama3.1:8b', host='', timeout=0, options: Any = None, client_kwargs: dict = None):
+    def __init__(self, model='llama3.1:8b', host='', timeout=1000, options: Any = None, client_kwargs: dict = None):
         self.model = model
         self.options = options
         client_kwargs = client_kwargs or {}
@@ -3262,7 +3305,7 @@ class AgentSession:
 class Storage:
     def __init__(self, table_name: str, schema='ai', db_url: str = None, db_engine: sqlalchemy.engine.Engine = None, auto_upgrade_schema=False):
         _engine: sqlalchemy.engine.Engine = db_engine
-        if _engine is None and db_url is not None:
+        if _engine is None and db_url:
             _engine = sqlalchemy.engine.create_engine(db_url, connect_args={'charset': 'utf8mb4'})
         if _engine is None:
             raise ValueError('Must provide either db_url or db_engine')
@@ -3303,7 +3346,7 @@ class Storage:
     def read(self, session_id: str, user_id: str = None) -> Optional[AgentSession]:
         with self.Session.begin() as sess:
             stmt = sqlalchemy.sql.expression.select(self.table).where(self.table.c.session_id == session_id)
-            if user_id is not None:
+            if user_id:
                 stmt = stmt.where(self.table.c.user_id == user_id)
             try:
                 existing_row = sess.execute(stmt).first()
@@ -3315,16 +3358,16 @@ class Storage:
         sessions = []
         with self.Session.begin() as sess:
             stmt = sqlalchemy.sql.expression.select(self.table)
-            if user_id is not None:
+            if user_id:
                 stmt = stmt.where(self.table.c.user_id == user_id)
-            if entity_id is not None:
+            if entity_id:
                 stmt = stmt.where(self.table.c.agent_id == entity_id)
             stmt = stmt.order_by(self.table.c.created_at.desc())
             rows = sess.execute(stmt).fetchall()
             for row in rows:
-                if row.session_id is not None:
+                if row.session_id:
                     _agent_session = AgentSession(**row._mapping)
-                    if _agent_session is not None:
+                    if _agent_session:
                         sessions.append(_agent_session)
         return sessions
 
@@ -3341,7 +3384,7 @@ class Storage:
                         AND column_name = 'team_session_id'
                         ''')
                     column_exists = (sess.execute(column_exists_query, {'schema': self.schema, 'table': self.table_name}).scalar()
-                        is not None)
+                       )
                     if not column_exists:
                         print(f'Adding "team_session_id" column to {self.schema}.{self.table_name}')
                         alter_table_query = sqlalchemy.sql.expression.text(f'ALTER TABLE {self.schema}.{self.table_name} ADD COLUMN team_session_id TEXT')
@@ -3367,13 +3410,13 @@ class Storage:
                 ''')
             try:
                 sess.execute(upsert_sql, {'session_id': session.session_id, 'agent_id': session.agent_id, 'team_session_id': session.team_session_id, 'user_id': session.user_id, 'memory': json.dumps(session.memory, ensure_ascii=False)
-                        if session.memory is not None
+                        if session.memory
                         else None, 'agent_data': json.dumps(session.agent_data, ensure_ascii=False)
-                        if session.agent_data is not None
+                        if session.agent_data
                         else None, 'session_data': json.dumps(session.session_data, ensure_ascii=False)
-                        if session.session_data is not None
+                        if session.session_data
                         else None, 'extra_data': json.dumps(session.extra_data, ensure_ascii=False)
-                        if session.extra_data is not None
+                        if session.extra_data
                         else None})
             except Exception as e:
                 if not self.table_exists():
@@ -3568,10 +3611,10 @@ class Agent:
 
     def set_monitoring(self) -> None:
         monitor_env = os.getenv('AGNO_MONITOR')
-        if monitor_env is not None:
+        if monitor_env:
             self.monitoring = monitor_env.lower() == 'true'
         telemetry_env = os.getenv('AGNO_TELEMETRY')
-        if telemetry_env is not None:
+        if telemetry_env:
             self.telemetry = telemetry_env.lower() == 'true'
 
     def initialize_agent(self) -> None:
@@ -3587,7 +3630,7 @@ class Agent:
 
     @property
     def has_team(self) -> bool:
-        return self.team is not None and len(self.team) > 0
+        return self.team and len(self.team) > 0
 
     def _run(self, message: Union[str, List, Dict, Message] = None, *, stream: bool = False, audio: Sequence[Audio] = None, images: Sequence[Image] = None, videos: Sequence[Video] = None, files: Sequence[File] = None, messages: Sequence[Union[Dict, Message]] = None, stream_intermediate_steps: bool = False, **kwargs: Any) -> Iterator[RunResponse]:
         """运行代理并生成RunResponse。
@@ -3612,15 +3655,15 @@ class Agent:
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
         print(f'Agent Run Start: {self.run_response.run_id}')
         self.update_model()
-        self.run_response.model = self.model.id if self.model is not None else None
-        if self.context is not None and self.resolve_context:
+        self.run_response.model = self.model.id if self.model else None
+        if self.context and self.resolve_context:
             self.resolve_run_context()
         self.read_from_storage()
         run_messages: RunMessages = self.get_run_messages(message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs)
         if len(run_messages.messages) == 0:
             print('没有消息要发送到模型.')
         self.run_messages = run_messages
-        if self.reasoning or self.reasoning_model is not None:
+        if self.reasoning or self.reasoning_model:
             reasoning_generator = self.reason(run_messages=run_messages)
             if self.stream:
                 yield from reasoning_generator
@@ -3634,43 +3677,43 @@ class Agent:
             model_response = ModelResponse()
             for model_response_chunk in self.model.response_stream(messages=run_messages.messages):
                 if model_response_chunk.event == ResponseEvent.res.value:
-                    if model_response_chunk.content is not None:
+                    if model_response_chunk.content:
                         model_response.content = (model_response.content or '') + model_response_chunk.content
                         self.run_response.content = model_response.content
-                    if model_response_chunk.thinking is not None:
+                    if model_response_chunk.thinking:
                         model_response.thinking = (model_response.thinking or '') + model_response_chunk.thinking
                         self.run_response.thinking = model_response.thinking
-                    if model_response_chunk.redacted_thinking is not None:
+                    if model_response_chunk.redacted_thinking:
                         model_response.redacted_thinking = (model_response.redacted_thinking or '') + model_response_chunk.redacted_thinking
                         self.run_response.thinking = model_response.redacted_thinking
-                    if model_response_chunk.citations is not None:
+                    if model_response_chunk.citations:
                         self.run_response.citations = model_response_chunk.citations
-                    if model_response_chunk.content is not None or model_response_chunk.thinking is not None or model_response_chunk.redacted_thinking is not None or model_response_chunk.citations is not None:
+                    if model_response_chunk.content or model_response_chunk.thinking or model_response_chunk.redacted_thinking or model_response_chunk.citations:
                         yield self.create_run_response(content=model_response_chunk.content, thinking=model_response_chunk.thinking, redacted_thinking=model_response_chunk.redacted_thinking, citations=model_response_chunk.citations, created_at=model_response_chunk.created_at)
-                    if model_response_chunk.audio is not None:
+                    if model_response_chunk.audio:
                         if model_response.audio is None:
                             model_response.audio = AudioResponse(id=str(uuid.uuid4()), content='', transcript='')
-                        if model_response_chunk.audio.id is not None:
+                        if model_response_chunk.audio.id:
                             model_response.audio.id = model_response_chunk.audio.id
-                        if model_response_chunk.audio.content is not None:
+                        if model_response_chunk.audio.content:
                             model_response.audio.content += model_response_chunk.audio.content
-                        if model_response_chunk.audio.transcript is not None:
+                        if model_response_chunk.audio.transcript:
                             model_response.audio.transcript += model_response_chunk.audio.transcript
-                        if model_response_chunk.audio.expires_at is not None:
+                        if model_response_chunk.audio.expires_at:
                             model_response.audio.expires_at = model_response_chunk.audio.expires_at
-                        if model_response_chunk.audio.mime_type is not None:
+                        if model_response_chunk.audio.mime_type:
                             model_response.audio.mime_type = model_response_chunk.audio.mime_type
                         model_response.audio.sample_rate = model_response_chunk.audio.sample_rate
                         model_response.audio.channels = model_response_chunk.audio.channels
                         self.run_response.response_audio = AudioResponse(id=model_response_chunk.audio.id, content=model_response_chunk.audio.content, transcript=model_response_chunk.audio.transcript, sample_rate=model_response_chunk.audio.sample_rate, channels=model_response_chunk.audio.channels)
                         self.run_response.created_at = model_response_chunk.created_at
                         yield self.run_response
-                    if model_response_chunk.image is not None:
+                    if model_response_chunk.image:
                         self.add_image(model_response_chunk.image)
                         yield self.run_response
                 elif model_response_chunk.event == ResponseEvent.start.value:
                     tool_calls_list = model_response_chunk.tool_calls
-                    if tool_calls_list is not None:
+                    if tool_calls_list:
                         if self.run_response.tools is None:
                             self.run_response.tools = tool_calls_list
                         else:
@@ -3680,13 +3723,13 @@ class Agent:
                         yield self.create_run_response(content=model_response_chunk.content, event=RunEvent.tool_call_started)
                 elif model_response_chunk.event == ResponseEvent.end.value:
                     tool_calls_list = model_response_chunk.tool_calls
-                    if tool_calls_list is not None:
+                    if tool_calls_list:
                         if self.run_response.tools:
                             tool_call_index_map = {tc['tool_call_id']: i for i, tc in enumerate(self.run_response.tools) if tc.get('tool_call_id')}
                             for tool_call_dict in tool_calls_list:
                                 tool_call_id = tool_call_dict.get('tool_call_id')
                                 index = tool_call_index_map.get(tool_call_id)
-                                if index is not None:
+                                if index:
                                     self.run_response.tools[index] = tool_call_dict
                         else:
                             self.run_response.tools = tool_calls_list
@@ -3696,40 +3739,40 @@ class Agent:
             model_response = self.model.response(messages=run_messages.messages)
             if model_response.tool_calls:
                 self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
-            if self.response_model is not None and model_response.parsed is not None:
+            if self.response_model and model_response.parsed:
                 if self.model.structured_outputs:
                     self.run_response.content = model_response.parsed
                     self.run_response.content_type = self.response_model.__name__
             else:
                 self.run_response.content = model_response.content
-            if model_response.thinking is not None:
+            if model_response.thinking:
                 self.run_response.thinking = model_response.thinking
-            if model_response.redacted_thinking is not None:
+            if model_response.redacted_thinking:
                 if self.run_response.thinking is None:
                     self.run_response.thinking = model_response.redacted_thinking
                 else:
                     self.run_response.thinking += model_response.redacted_thinking
-            if model_response.citations is not None:
+            if model_response.citations:
                 self.run_response.citations = model_response.citations
-            if model_response.tool_calls is not None:
+            if model_response.tool_calls:
                 if self.run_response.tools is None:
                     self.run_response.tools = model_response.tool_calls
                 else:
                     self.run_response.tools.extend(model_response.tool_calls)
-            if model_response.audio is not None:
+            if model_response.audio:
                 self.run_response.response_audio = model_response.audio
-            if model_response.image is not None:
+            if model_response.image:
                 self.add_image(model_response.image)
             self.run_response.messages = run_messages.messages
             self.run_response.created_at = model_response.created_at
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         self.run_response.messages = messages_for_run_response
         self.run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
-        if self.stream and model_response.audio is not None:
+        if self.stream and model_response.audio:
             self.run_response.response_audio = model_response.audio
-        if run_messages.system_message is not None:
+        if run_messages.system_message:
             self.memory.add_system_message(run_messages.system_message, system_message_role=self.system_message_role)
-        messages_for_memory: List[Message] = ([run_messages.user_message] if run_messages.user_message is not None else [])
+        messages_for_memory: List[Message] = ([run_messages.user_message] if run_messages.user_message else [])
         for _rm in run_messages.messages[index_of_last_user_message:]:
             if _rm.add_to_agent_memory:
                 messages_for_memory.append(_rm)
@@ -3739,9 +3782,9 @@ class Agent:
             yield self.create_run_response(content='Memory updated', event=RunEvent.updating_memory)
         agent_run = AgentRun(response=self.run_response)
         agent_run.message = run_messages.user_message
-        if self.memory.create_user_memories and self.memory.update_user_memories_after_run and run_messages.user_message is not None:
+        if self.memory.create_user_memories and self.memory.update_user_memories_after_run and run_messages.user_message:
             self.memory.update_memory(input=run_messages.user_message.get_content_string())
-        if messages is not None and len(messages) > 0:
+        if messages and len(messages) > 0:
             for _im in messages:
                 mp = None
                 if isinstance(_im, Message):
@@ -3767,14 +3810,14 @@ class Agent:
             self.memory.update_summary()
         self.write_to_storage()
         self.save_run_response_to_file(message=message)
-        if message is not None:
+        if message:
             if isinstance(message, str):
                 self.run_input = message
             elif isinstance(message, Message):
                 self.run_input = message.to_dict()
             else:
                 self.run_input = message
-        elif messages is not None:
+        elif messages:
             self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
         self.set_monitoring()
         if self.telemetry or self.monitoring:
@@ -3797,7 +3840,7 @@ class Agent:
         last_exception = None
         num_attempts = retries + 1
         for attempt in range(num_attempts):
-            if self.response_model is not None and self.parse_response:
+            if self.response_model and self.parse_response:
                 print('Setting stream=False as response_model is set')
                 self.stream = False
                 run_response: RunResponse = next(self._run(message=message, stream=False, audio=audio, images=images, videos=videos, files=files, messages=messages, stream_intermediate_steps=stream_intermediate_steps, **kwargs))
@@ -3806,10 +3849,10 @@ class Agent:
                 if isinstance(run_response.content, str):
                     try:
                         structured_output = parse_response_model_str(run_response.content, self.response_model)
-                        if structured_output is not None:
+                        if structured_output:
                             run_response.content = structured_output
                             run_response.content_type = self.response_model.__name__
-                            if self.run_response is not None:
+                            if self.run_response:
                                 self.run_response.content = structured_output
                                 self.run_response.content_type = self.response_model.__name__
                         else:
@@ -3826,7 +3869,7 @@ class Agent:
                 else:
                     resp = self._run(message=message, stream=False, audio=audio, images=images, videos=videos, files=files, messages=messages, stream_intermediate_steps=stream_intermediate_steps, **kwargs)
                     return next(resp)
-        if last_exception is not None:
+        if last_exception:
             print(f'尝试{num_attempts}次后失败。上次错误使用 {last_exception.model_name}({last_exception.model_id})')
             raise last_exception
         else:
@@ -3840,15 +3883,15 @@ class Agent:
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
         print(f'Async Agent Run Start: {self.run_response.run_id}')
         self.update_model(async_mode=True)
-        self.run_response.model = self.model.id if self.model is not None else None
-        if self.context is not None and self.resolve_context:
+        self.run_response.model = self.model.id if self.model else None
+        if self.context and self.resolve_context:
             self.resolve_run_context()
         self.read_from_storage()
         run_messages: RunMessages = self.get_run_messages(message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs)
         if len(run_messages.messages) == 0:
             print('没有消息要发送到模型。')
         self.run_messages = run_messages
-        if self.reasoning or self.reasoning_model is not None:
+        if self.reasoning or self.reasoning_model:
             areason_generator = self.areason(run_messages=run_messages)
             if self.stream:
                 async for item in areason_generator:
@@ -3865,43 +3908,43 @@ class Agent:
             model_response_stream = self.model.aresponse_stream(messages=run_messages.messages)
             async for model_response_chunk in model_response_stream:
                 if model_response_chunk.event == ResponseEvent.res.value:
-                    if model_response_chunk.content is not None:
+                    if model_response_chunk.content:
                         model_response.content = (model_response.content or '') + model_response_chunk.content
                         self.run_response.content = model_response.content
-                    if model_response_chunk.thinking is not None:
+                    if model_response_chunk.thinking:
                         model_response.thinking = (model_response.thinking or '') + model_response_chunk.thinking
                         self.run_response.thinking = model_response.thinking
-                    if model_response_chunk.redacted_thinking is not None:
+                    if model_response_chunk.redacted_thinking:
                         model_response.redacted_thinking = (model_response.redacted_thinking or '') + model_response_chunk.redacted_thinking
                         self.run_response.thinking = model_response.redacted_thinking
-                    if model_response_chunk.citations is not None:
+                    if model_response_chunk.citations:
                         self.run_response.citations = model_response_chunk.citations
-                    if model_response_chunk.content is not None or model_response_chunk.thinking is not None or model_response_chunk.redacted_thinking is not None or model_response_chunk.citations is not None:
+                    if model_response_chunk.content or model_response_chunk.thinking or model_response_chunk.redacted_thinking or model_response_chunk.citations:
                         yield self.create_run_response(content=model_response_chunk.content, thinking=model_response_chunk.thinking, redacted_thinking=model_response_chunk.redacted_thinking, citations=model_response_chunk.citations, created_at=model_response_chunk.created_at)
-                    if model_response_chunk.audio is not None:
+                    if model_response_chunk.audio:
                         if model_response.audio is None:
                             model_response.audio = AudioResponse(id=str(uuid.uuid4()), content='', transcript='')
-                        if model_response_chunk.audio.id is not None:
+                        if model_response_chunk.audio.id:
                             model_response.audio.id = model_response_chunk.audio.id
-                        if model_response_chunk.audio.content is not None:
+                        if model_response_chunk.audio.content:
                             model_response.audio.content += model_response_chunk.audio.content
-                        if model_response_chunk.audio.transcript is not None:
+                        if model_response_chunk.audio.transcript:
                             model_response.audio.transcript += model_response_chunk.audio.transcript
-                        if model_response_chunk.audio.expires_at is not None:
+                        if model_response_chunk.audio.expires_at:
                             model_response.audio.expires_at = model_response_chunk.audio.expires_at
-                        if model_response_chunk.audio.mime_type is not None:
+                        if model_response_chunk.audio.mime_type:
                             model_response.audio.mime_type = model_response_chunk.audio.mime_type
                         model_response.audio.sample_rate = model_response_chunk.audio.sample_rate
                         model_response.audio.channels = model_response_chunk.audio.channels
                         self.run_response.response_audio = AudioResponse(id=model_response_chunk.audio.id, content=model_response_chunk.audio.content, transcript=model_response_chunk.audio.transcript, sample_rate=model_response_chunk.audio.sample_rate, channels=model_response_chunk.audio.channels)
                         self.run_response.created_at = model_response_chunk.created_at
                         yield self.run_response
-                    if model_response_chunk.image is not None:
+                    if model_response_chunk.image:
                         self.add_image(model_response_chunk.image)
                         yield self.run_response
                 elif model_response_chunk.event == ResponseEvent.start.value:
                     tool_calls_list = model_response_chunk.tool_calls
-                    if tool_calls_list is not None:
+                    if tool_calls_list:
                         if self.run_response.tools is None:
                             self.run_response.tools = tool_calls_list
                         else:
@@ -3911,15 +3954,15 @@ class Agent:
                         yield self.create_run_response(content=model_response_chunk.content, event=RunEvent.tool_call_started)
                 elif model_response_chunk.event == ResponseEvent.end.value:
                     tool_calls_list = model_response_chunk.tool_calls
-                    if tool_calls_list is not None:
+                    if tool_calls_list:
                         if self.run_response.tools:
                             tool_call_index_map = {tc['tool_call_id']: i
                                 for i, tc in enumerate(self.run_response.tools)
-                                if tc.get('tool_call_id') is not None}
+                                if tc.get('tool_call_id')}
                             for tool_call_dict in tool_calls_list:
                                 tool_call_id = (tool_call_dict['tool_call_id'] if 'tool_call_id' in tool_call_dict else None)
                                 index = tool_call_index_map.get(tool_call_id)
-                                if index is not None:
+                                if index:
                                     self.run_response.tools[index] = tool_call_dict
                         else:
                             self.run_response.tools = tool_calls_list
@@ -3929,40 +3972,40 @@ class Agent:
             model_response = await self.model.aresponse(messages=run_messages.messages)
             if model_response.tool_calls:
                 self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
-            if self.response_model is not None and model_response.parsed is not None:
+            if self.response_model and model_response.parsed:
                 if self.model.structured_outputs:
                     self.run_response.content = model_response.parsed
                     self.run_response.content_type = self.response_model.__name__
             else:
                 self.run_response.content = model_response.content
-            if model_response.thinking is not None:
+            if model_response.thinking:
                 self.run_response.thinking = model_response.thinking
-            if model_response.redacted_thinking is not None:
+            if model_response.redacted_thinking:
                 if self.run_response.thinking is None:
                     self.run_response.thinking = model_response.redacted_thinking
                 else:
                     self.run_response.thinking += model_response.redacted_thinking
-            if model_response.citations is not None:
+            if model_response.citations:
                 self.run_response.citations = model_response.citations
-            if model_response.tool_calls is not None:
+            if model_response.tool_calls:
                 if self.run_response.tools is None:
                     self.run_response.tools = model_response.tool_calls
                 else:
                     self.run_response.tools.extend(model_response.tool_calls)
-            if model_response.audio is not None:
+            if model_response.audio:
                 self.run_response.response_audio = model_response.audio
-            if model_response.image is not None:
+            if model_response.image:
                 self.add_image(model_response.image)
             self.run_response.messages = run_messages.messages
             self.run_response.created_at = model_response.created_at
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         self.run_response.messages = messages_for_run_response
         self.run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
-        if self.stream and model_response.audio is not None:
+        if self.stream and model_response.audio:
             self.run_response.response_audio = model_response.audio
-        if run_messages.system_message is not None:
+        if run_messages.system_message:
             self.memory.add_system_message(run_messages.system_message, system_message_role=self.system_message_role)
-        messages_for_memory: List[Message] = ([run_messages.user_message] if run_messages.user_message is not None else [])
+        messages_for_memory: List[Message] = ([run_messages.user_message] if run_messages.user_message else [])
         for _rm in run_messages.messages[index_of_last_user_message:]:
             if _rm.add_to_agent_memory:
                 messages_for_memory.append(_rm)
@@ -3972,9 +4015,9 @@ class Agent:
             yield self.create_run_response(content='Memory updated', event=RunEvent.updating_memory)
         agent_run = AgentRun(response=self.run_response)
         agent_run.message = run_messages.user_message
-        if self.memory.create_user_memories and self.memory.update_user_memories_after_run and run_messages.user_message is not None:
+        if self.memory.create_user_memories and self.memory.update_user_memories_after_run and run_messages.user_message:
             await self.memory.aupdate_memory(input=run_messages.user_message.get_content_string())
-        if messages is not None and len(messages) > 0:
+        if messages and len(messages) > 0:
             for _im in messages:
                 mp = None
                 if isinstance(_im, Message):
@@ -4000,14 +4043,14 @@ class Agent:
             await self.memory.aupdate_summary()
         self.write_to_storage()
         self.save_run_response_to_file(message=message)
-        if message is not None:
+        if message:
             if isinstance(message, str):
                 self.run_input = message
             elif isinstance(message, Message):
                 self.run_input = message.to_dict()
             else:
                 self.run_input = message
-        elif messages is not None:
+        elif messages:
             self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
         self.set_monitoring()
         if self.telemetry or self.monitoring:
@@ -4032,7 +4075,7 @@ class Agent:
         num_attempts = retries + 1
         for attempt in range(num_attempts):
             print(f'Attempt {attempt + 1}/{num_attempts}')
-            if self.response_model is not None and self.parse_response:
+            if self.response_model and self.parse_response:
                 print('Setting stream=False as response_model is set')
                 run_response = await self._arun(message=message, stream=False, audio=audio, images=images, videos=videos, files=files, messages=messages, stream_intermediate_steps=stream_intermediate_steps, **kwargs).__anext__()
                 if isinstance(run_response.content, self.response_model):
@@ -4040,10 +4083,10 @@ class Agent:
                 if isinstance(run_response.content, str):
                     try:
                         structured_output = parse_response_model_str(run_response.content, self.response_model)
-                        if structured_output is not None:
+                        if structured_output:
                             run_response.content = structured_output
                             run_response.content_type = self.response_model.__name__
-                            if self.run_response is not None:
+                            if self.run_response:
                                 self.run_response.content = structured_output
                                 self.run_response.content_type = self.response_model.__name__
                         else:
@@ -4060,7 +4103,7 @@ class Agent:
                 else:
                     resp = self._arun(message=message, stream=False, audio=audio, images=images, videos=videos, files=files, messages=messages, stream_intermediate_steps=stream_intermediate_steps, **kwargs)
                     return await resp.__anext__()
-        if last_exception is not None:
+        if last_exception:
             print(f'Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})')
             raise last_exception
         else:
@@ -4069,15 +4112,15 @@ class Agent:
     def create_run_response(self, content: Any = None, *, thinking: str = None, redacted_thinking: str = None, event: RunEvent = RunEvent.run_response, content_type: str = None, created_at: int = None, citations: Citations = None) -> RunResponse:
         thinking_combined = (thinking or '') + (redacted_thinking or '')
         rr = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id, content=content, thinking=thinking_combined if thinking_combined else None, tools=self.run_response.tools, audio=self.run_response.audio, images=self.run_response.images, videos=self.run_response.videos, citations=citations or self.run_response.citations, response_audio=self.run_response.response_audio, model=self.run_response.model, messages=self.run_response.messages, extra_data=self.run_response.extra_data, event=event.value)
-        if content_type is not None:
+        if content_type:
             rr.content_type = content_type
-        if created_at is not None:
+        if created_at:
             rr.created_at = created_at
         return rr
 
     def get_tools(self, async_mode: bool = False) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
-        if self.tools is not None:
+        if self.tools:
             for tool in self.tools:
                 agent_tools.append(tool)
         if self.read_chat_history:
@@ -4086,7 +4129,7 @@ class Agent:
             agent_tools.append(self.get_tool_call_history)
         if self.memory and self.memory.create_user_memories:
             agent_tools.append(self.update_memory)
-        if self.knowledge is not None or self.retriever is not None:
+        if self.knowledge or self.retriever:
             if self.search_knowledge:
                 if async_mode:
                     agent_tools.append(self.async_search_knowledge_base)
@@ -4094,7 +4137,7 @@ class Agent:
                     agent_tools.append(self.search_knowledge_base)
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
-        if self.has_team and self.team is not None:
+        if self.has_team and self.team:
             for agent_index, agent in enumerate(self.team):
                 agent_tools.append(self.get_transfer_function(agent, agent_index))
         return agent_tools
@@ -4102,10 +4145,10 @@ class Agent:
     def add_tools_to_model(self, model: Model, async_mode: bool = False) -> None:
         if self._functions_for_model is None or self._tools_for_model is None:
             agent_tools = self.get_tools(async_mode=async_mode)
-            if agent_tools is not None and len(agent_tools) > 0:
+            if agent_tools and len(agent_tools) > 0:
                 print('Processing tools for model')
                 strict = False
-                if self.response_model is not None and (self.structured_outputs or (not self.use_json_mode)) and model.supports_native_structured_outputs:
+                if self.response_model and (self.structured_outputs or (not self.use_json_mode)) and model.supports_native_structured_outputs:
                     strict = True
                 self._tools_for_model = []
                 self._functions_for_model = {}
@@ -4176,16 +4219,16 @@ class Agent:
                 self.model.response_format = (json_response_format if (self.use_json_mode or not self.structured_outputs) else None)
                 self.model.structured_outputs = False
         self.add_tools_to_model(model=self.model, async_mode=async_mode)
-        if self.show_tool_calls is not None:
+        if self.show_tool_calls:
             self.model.show_tool_calls = self.show_tool_calls
-        if self.tool_choice is not None:
+        if self.tool_choice:
             self.model.tool_choice = self.tool_choice
-        if self.tool_call_limit is not None:
+        if self.tool_call_limit:
             self.model.tool_call_limit = self.tool_call_limit
 
     def resolve_run_context(self) -> None:
         print('Resolving context')
-        if self.context is not None:
+        if self.context:
             if isinstance(self.context, dict):
                 for ctx_key, ctx_value in self.context.items():
                     if callable(ctx_value):
@@ -4195,7 +4238,7 @@ class Agent:
                                 resolved_ctx_value = ctx_value(agent=self)
                             else:
                                 resolved_ctx_value = ctx_value()
-                            if resolved_ctx_value is not None:
+                            if resolved_ctx_value:
                                 self.context[ctx_key] = resolved_ctx_value
                         except Exception as e:
                             print(f'Failed to resolve context for {ctx_key}: {e}')
@@ -4206,82 +4249,82 @@ class Agent:
 
     def load_user_memories(self) -> None:
         if self.memory and self.memory.create_user_memories:
-            if self.user_id is not None and self.memory.user_id is None:
+            if self.user_id and self.memory.user_id is None:
                 self.memory.user_id = self.user_id
             self.memory.load_user_memories()
-            if self.user_id is not None:
+            if self.user_id:
                 print(f'Memories loaded for user: {self.user_id}')
             else:
                 print('Memories loaded')
 
     def get_agent_data(self) -> Dict[str, Any]:
         agent_data: Dict[str, Any] = {}
-        if self.name is not None:
+        if self.name:
             agent_data['name'] = self.name
-        if self.agent_id is not None:
+        if self.agent_id:
             agent_data['agent_id'] = self.agent_id
-        if self.model is not None:
+        if self.model:
             agent_data['model'] = self.model.to_dict()
         return agent_data
 
     def get_session_data(self) -> Dict[str, Any]:
         session_data: Dict[str, Any] = {}
-        if self.session_name is not None:
+        if self.session_name:
             session_data['session_name'] = self.session_name
-        if self.session_state is not None and len(self.session_state) > 0:
+        if self.session_state and len(self.session_state) > 0:
             session_data['session_state'] = self.session_state
-        if self.team_data is not None:
+        if self.team_data:
             session_data['team_data'] = self.team_data
-        if self.images is not None:
+        if self.images:
             session_data['images'] = [img.to_dict() for img in self.images]
-        if self.videos is not None:
+        if self.videos:
             session_data['videos'] = [vid.to_dict() for vid in self.videos]
-        if self.audio is not None:
+        if self.audio:
             session_data['audio'] = [aud.to_dict() for aud in self.audio]
         return session_data
 
     def get_agent_session(self) -> AgentSession:
-        return AgentSession(session_id=self.session_id, agent_id=self.agent_id, user_id=self.user_id, team_session_id=self.team_session_id, memory=self.memory.to_dict() if self.memory is not None else None, agent_data=self.get_agent_data(), session_data=self.get_session_data(), extra_data=self.extra_data, created_at=int(time.time()))
+        return AgentSession(session_id=self.session_id, agent_id=self.agent_id, user_id=self.user_id, team_session_id=self.team_session_id, memory=self.memory.to_dict() if self.memory else None, agent_data=self.get_agent_data(), session_data=self.get_session_data(), extra_data=self.extra_data, created_at=int(time.time()))
 
     def load_agent_session(self, session: AgentSession):
-        if self.agent_id is None and session.agent_id is not None:
+        if self.agent_id is None and session.agent_id:
             self.agent_id = session.agent_id
-        if self.user_id is None and session.user_id is not None:
+        if self.user_id is None and session.user_id:
             self.user_id = session.user_id
-        if self.session_id is None and session.session_id is not None:
+        if self.session_id is None and session.session_id:
             self.session_id = session.session_id
-        if session.agent_data is not None:
+        if session.agent_data:
             if self.name is None and 'name' in session.agent_data:
                 self.name = session.agent_data.get('name')
-        if session.session_data is not None:
+        if session.session_data:
             if self.session_name is None and 'session_name' in session.session_data:
                 self.session_name = session.session_data.get('session_name')
             if 'session_state' in session.session_data:
                 session_state_from_db = session.session_data.get('session_state')
-                if session_state_from_db is not None and isinstance(session_state_from_db, dict) and len(session_state_from_db) > 0:
-                    if self.session_state is not None and len(self.session_state) > 0:
+                if session_state_from_db and isinstance(session_state_from_db, dict) and len(session_state_from_db) > 0:
+                    if self.session_state and len(self.session_state) > 0:
                         merge_dictionaries(session_state_from_db, self.session_state)
                     self.session_state = session_state_from_db
             if 'images' in session.session_data:
                 images_from_db = session.session_data.get('images')
-                if images_from_db is not None and isinstance(images_from_db, list):
+                if images_from_db and isinstance(images_from_db, list):
                     if self.images is None:
                         self.images = []
                     self.images.extend([ImageArtifact.model_validate(img) for img in images_from_db])
             if 'videos' in session.session_data:
                 videos_from_db = session.session_data.get('videos')
-                if videos_from_db is not None and isinstance(videos_from_db, list):
+                if videos_from_db and isinstance(videos_from_db, list):
                     if self.videos is None:
                         self.videos = []
                     self.videos.extend([VideoArtifact.model_validate(vid) for vid in videos_from_db])
             if 'audio' in session.session_data:
                 audio_from_db = session.session_data.get('audio')
-                if audio_from_db is not None and isinstance(audio_from_db, list):
+                if audio_from_db and isinstance(audio_from_db, list):
                     if self.audio is None:
                         self.audio = []
                     self.audio.extend([AudioArtifact.model_validate(aud) for aud in audio_from_db])
-        if session.extra_data is not None:
-            if self.extra_data is not None:
+        if session.extra_data:
+            if self.extra_data:
                 merge_dictionaries(session.extra_data, self.extra_data)
             self.extra_data = session.extra_data
         if self.memory is None:
@@ -4291,7 +4334,7 @@ class Agent:
                 self.memory = AgentMemory(**self.memory)
             else:
                 raise TypeError(f'预期内存为dict或AgentMemory，但实际得到{type(self.memory)}')
-        if session.memory is not None:
+        if session.memory:
             try:
                 if 'runs' in session.memory:
                     try:
@@ -4318,35 +4361,35 @@ class Agent:
         print(f'-*- AgentSession loaded: {session.session_id}')
 
     def read_from_storage(self) -> Optional[AgentSession]:
-        if self.storage is not None and self.session_id is not None:
+        if self.storage and self.session_id:
             self.agent_session = self.storage.read(session_id=self.session_id)
-            if self.agent_session is not None:
+            if self.agent_session:
                 self.load_agent_session(session=self.agent_session)
             self.load_user_memories()
         return self.agent_session
 
     def write_to_storage(self) -> Optional[AgentSession]:
-        if self.storage is not None:
+        if self.storage:
             self.agent_session = self.storage.upsert(session=self.get_agent_session())
         return self.agent_session
 
     def add_introduction(self, introduction: str) -> None:
-        if introduction is not None:
+        if introduction:
             if len(self.memory.runs) == 0:
                 self.memory.add_run(AgentRun(response=RunResponse(content=introduction, messages=[Message(role=self.model.assistant_message_role, content=introduction)])))
 
     def load_session(self, force: bool = False) -> Optional[str]:
-        if self.agent_session is not None and not force:
-            if self.session_id is not None and self.agent_session.session_id == self.session_id:
+        if self.agent_session and not force:
+            if self.session_id and self.agent_session.session_id == self.session_id:
                 return self.agent_session.session_id
-        if self.storage is not None:
+        if self.storage:
             print(f'Reading AgentSession: {self.session_id}')
             self.read_from_storage()
             if self.agent_session is None:
                 print('-*- Creating new AgentSession')
                 if self.agent_id is None or self.session_id is None:
                     self.initialize_agent()
-                if self.introduction is not None:
+                if self.introduction:
                     self.add_introduction(self.introduction)
                 self.write_to_storage()
                 if self.agent_session is None:
@@ -4357,16 +4400,16 @@ class Agent:
 
     def new_session(self) -> None:
         self.agent_session = None
-        if self.model is not None:
+        if self.model:
             self.model.clear()
-        if self.memory is not None:
+        if self.memory:
             self.memory.clear()
         self.session_id = str(uuid.uuid4())
         self.load_session(force=True)
 
     def get_json_output_prompt(self) -> str:
         json_output_prompt = '以包含以下字段的JSON格式提供输出:'
-        if self.response_model is not None:
+        if self.response_model:
             if isinstance(self.response_model, str):
                 json_output_prompt += '\n<json_fields>'
                 json_output_prompt += f'\n{self.response_model}'
@@ -4377,10 +4420,10 @@ class Agent:
                 json_output_prompt += '\n</json_fields>'
             elif issubclass(self.response_model, Base):
                 json_schema = self.response_model.model_json_schema()
-                if json_schema is not None:
+                if json_schema:
                     response_model_properties = {}
                     json_schema_properties = json_schema.get('properties')
-                    if json_schema_properties is not None:
+                    if json_schema_properties:
                         for field_name, field_properties in json_schema_properties.items():
                             formatted_field_properties = {prop_name: prop_value
                                 for prop_name, prop_value in field_properties.items()
@@ -4392,7 +4435,7 @@ class Agent:
                                     formatted_field_properties['enum_type'] = enum_name
                             response_model_properties[field_name] = formatted_field_properties
                     json_schema_defs = json_schema.get('$defs')
-                    if json_schema_defs is not None:
+                    if json_schema_defs:
                         response_model_properties['$defs'] = {}
                         for def_name, def_properties in json_schema_defs.items():
                             if 'enum' in def_properties:
@@ -4400,7 +4443,7 @@ class Agent:
                             else:
                                 def_fields = def_properties.get('properties')
                                 formatted_def_properties = {}
-                                if def_fields is not None:
+                                if def_fields:
                                     for field_name, field_properties in def_fields.items():
                                         formatted_field_properties = {prop_name: prop_value
                                             for prop_name, prop_value in field_properties.items()
@@ -4428,11 +4471,11 @@ class Agent:
     def format_message_with_state_variables(self, msg: Any) -> Any:
         if not isinstance(msg, str):
             return msg
-        format_variables = collections.ChainMap(self.session_state or {}, self.context or {}, self.extra_data or {}, {'user_id': self.user_id} if self.user_id is not None else {})
+        format_variables = collections.ChainMap(self.session_state or {}, self.context or {}, self.extra_data or {}, {'user_id': self.user_id} if self.user_id else {})
         return SafeFormatter().format(msg, **format_variables)
 
     def get_system_message(self) -> Optional[Message]:
-        if self.system_message is not None:
+        if self.system_message:
             if isinstance(self.system_message, Message):
                 return self.system_message
             sys_message_content: str = ''
@@ -4444,7 +4487,7 @@ class Agent:
                     raise Exception('system_message must return a string')
             if self.add_state_in_messages:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
-            if self.response_model is not None and self.model and (self.model.supports_native_structured_outputs and (self.use_json_mode or self.structured_outputs is False)):
+            if self.response_model and self.model and (self.model.supports_native_structured_outputs and (self.use_json_mode or self.structured_outputs is False)):
                 sys_message_content += f'\n{self.get_json_output_prompt()}'
             return Message(role=self.system_message_role, content=sys_message_content)
         if not self.create_default_system_message:
@@ -4452,7 +4495,7 @@ class Agent:
         if self.model is None:
             raise Exception('model not set')
         instructions: List[str] = []
-        if self.instructions is not None:
+        if self.instructions:
             _instructions = self.instructions
             if callable(self.instructions):
                 _instructions = self.instructions(agent=self)
@@ -4461,21 +4504,21 @@ class Agent:
             elif isinstance(_instructions, list):
                 instructions.extend(_instructions)
         _model_instructions = self.model.get_instructions_for_model()
-        if _model_instructions is not None:
+        if _model_instructions:
             instructions.extend(_model_instructions)
         additional_information: List[str] = []
         if self.markdown and self.response_model is None:
             additional_information.append('Use markdown to format your answers.')
         if self.add_datetime_to_instructions:
             additional_information.append(f'The current time is {datetime.now()}')
-        if self.name is not None and self.add_name_to_instructions:
+        if self.name and self.add_name_to_instructions:
             additional_information.append(f'Your name is: {self.name}.')
         system_message_content: str = ''
-        if self.description is not None:
+        if self.description:
             system_message_content += f'{self.description}\n\n'
-        if self.goal is not None:
+        if self.goal:
             system_message_content += f'<your_goal>\n{self.goal}\n</your_goal>\n\n'
-        if self.role is not None:
+        if self.role:
             system_message_content += f'<your_role>\n{self.role}\n</your_role>\n\n'
         if self.has_team and self.add_transfer_instructions:
             system_message_content += ('<agent_team>\n'
@@ -4497,11 +4540,11 @@ class Agent:
         if self.add_state_in_messages:
             system_message_content = self.format_message_with_state_variables(system_message_content)
         system_message_from_model = self.model.get_system_message_for_model()
-        if system_message_from_model is not None:
+        if system_message_from_model:
             system_message_content += system_message_from_model
-        if self.expected_output is not None:
+        if self.expected_output:
             system_message_content += f'<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n'
-        if self.additional_context is not None:
+        if self.additional_context:
             system_message_content += f'{self.additional_context.strip()}\n'
         if self.has_team and self.add_transfer_instructions:
             system_message_content += f'<transfer_instructions>\n{self.get_transfer_instructions().strip()}\n</transfer_instructions>\n\n'
@@ -4518,13 +4561,13 @@ class Agent:
                     system_message_content += '你有能力保留之前与用户互动的记忆但尚未与用户进行任何交互。\n如果用户询问以前的记忆，你可以让他们知道你对用户没有任何记忆，因为你还没有任何互动。\n\n'
                 system_message_content += '您可以使用`update_memory`工具添加新内存。\n如果使用`update_memory`工具，请记住将响应传递给用户。\n\n'
             if self.memory.create_session_summary:
-                if self.memory.summary is not None:
+                if self.memory.summary:
                     system_message_content += 'Here is a brief summary of your previous interactions if it helps:\n\n'
                     system_message_content += '<summary_of_previous_interactions>\n'
                     system_message_content += str(self.memory.summary)
                     system_message_content += '\n</summary_of_previous_interactions>\n\n'
                     system_message_content += '注意：此信息来自以前的交互，可能已经过时。你应该总是更喜欢这次谈话中的信息，而不是过去的总结。\n\n'
-        if self.response_model is not None and not (self.model.supports_native_structured_outputs and (not self.use_json_mode or self.structured_outputs is True)):
+        if self.response_model and not (self.model.supports_native_structured_outputs and (not self.use_json_mode or self.structured_outputs is True)):
             system_message_content += f'{self.get_json_output_prompt()}'
         return Message(role=self.system_message_role, content=system_message_content.strip()) if system_message_content else None
 
@@ -4541,7 +4584,7 @@ class Agent:
             retrieval_timer = Timer()
             retrieval_timer.start()
             docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=message_str, **kwargs)
-            if docs_from_knowledge is not None:
+            if docs_from_knowledge:
                 references = MessageReferences(query=message_str, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4))
                 if self.run_response.extra_data is None:
                     self.run_response.extra_data = RunResponseExtraData()
@@ -4550,7 +4593,7 @@ class Agent:
                 self.run_response.extra_data.references.append(references)
             retrieval_timer.stop()
             print(f'Time to get references: {retrieval_timer.elapsed:.4f}s')
-        if self.user_message is not None:
+        if self.user_message:
             if isinstance(self.user_message, Message):
                 return self.user_message
             user_message_content = self.user_message
@@ -4569,12 +4612,12 @@ class Agent:
         user_msg_content = message
         if self.add_state_in_messages:
             user_msg_content = self.format_message_with_state_variables(message)
-        if self.add_references and references is not None and references.references is not None and len(references.references) > 0:
+        if self.add_references and references and references.references and len(references.references) > 0:
             user_msg_content += '\n\n如果有帮助，请使用知识库中的以下参考文献:\n'
             user_msg_content += '<references>\n'
             user_msg_content += self.convert_documents_to_string(references.references) + '\n'
             user_msg_content += '</references>'
-        if self.add_context and self.context is not None:
+        if self.add_context and self.context:
             user_msg_content += '\n\n<context>\n'
             user_msg_content += self.convert_context_to_string(self.context) + '\n'
             user_msg_content += '</context>'
@@ -4601,10 +4644,10 @@ class Agent:
         """
         run_messages = RunMessages()
         system_message = self.get_system_message()
-        if system_message is not None:
+        if system_message:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
-        if self.add_messages is not None:
+        if self.add_messages:
             messages_to_add_to_run_response: List[Message] = []
             if run_messages.extra_messages is None:
                 run_messages.extra_messages = []
@@ -4648,10 +4691,10 @@ class Agent:
                 user_message = Message.model_validate(message)
             except Exception as e:
                 print(f'验证消息失败: {e}')
-        if user_message is not None:
+        if user_message:
             run_messages.user_message = user_message
             run_messages.messages.append(user_message)
-        if messages is not None and len(messages) > 0:
+        if messages and len(messages) > 0:
             for _m in messages:
                 if isinstance(_m, Message):
                     run_messages.messages.append(_m)
@@ -4677,7 +4720,7 @@ class Agent:
             member_agent.team_data['leader_run_id'] = self.run_id
             member_agent_task = f'{task_description}\n\n<expected_output>\n{expected_output}\n</expected_output>'
             try:
-                if additional_information is not None and additional_information.strip() != '':
+                if additional_information and additional_information.strip() != '':
                     member_agent_task += f'\n\n<additional_information>\n{additional_information}\n</additional_information>'
             except Exception as e:
                 print(f'Failed to add additional information to the member agent: {e}')
@@ -4717,7 +4760,7 @@ class Agent:
         agent_name = agent_name.lower().replace(' ', '_')
         if member_agent.name is None:
             member_agent.name = agent_name
-        strict = True if (member_agent.response_model is not None and member_agent.model is not None) else False
+        strict = True if (member_agent.response_model and member_agent.model) else False
         transfer_function = Function.from_callable(_transfer_task_to_agent, strict=strict)
         transfer_function.strict = strict
         transfer_function.name = f'transfer_task_to_{agent_name}'
@@ -4742,7 +4785,7 @@ class Agent:
                     transfer_instructions += f'Name: {agent.name}\n'
                 if agent.role:
                     transfer_instructions += f'Role: {agent.role}\n'
-                if agent.tools is not None:
+                if agent.tools:
                     _tools = []
                     for _tool in agent.tools:
                         if isinstance(_tool, Toolkit):
@@ -4756,7 +4799,7 @@ class Agent:
         return ''
 
     def get_relevant_docs_from_knowledge(self, query: str, num_documents: int = None, **kwargs) -> Optional[List[Dict[str, Any]]]:
-        if self.retriever is not None and callable(self.retriever):
+        if self.retriever and callable(self.retriever):
             try:
                 sig = inspect.signature(self.retriever)
                 retriever_kwargs: Dict[str, Any] = {}
@@ -4775,7 +4818,7 @@ class Agent:
         return [doc.to_dict() for doc in relevant_docs]
     
     async def aget_relevant_docs_from_knowledge(self, query: str, num_documents: int = None, **kwargs) -> Optional[List[Dict[str, Any]]]:
-        if self.retriever is not None and callable(self.retriever):
+        if self.retriever and callable(self.retriever):
             try:
                 sig = inspect.signature(self.retriever)
                 retriever_kwargs: Dict[str, Any] = {}
@@ -4819,9 +4862,9 @@ class Agent:
                 return str(context)
 
     def save_run_response_to_file(self, message: Union[str, List, Dict, Message] = None) -> None:
-        if self.save_response_to_file is not None and self.run_response is not None:
+        if self.save_response_to_file and self.run_response:
             message_str = None
-            if message is not None:
+            if message:
                 if isinstance(message, str):
                     message_str = message
                 else:
@@ -4853,15 +4896,15 @@ class Agent:
 
     def aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
         aggregated_metrics: Dict[str, Any] = collections.defaultdict(list)
-        assistant_message_role = self.model.assistant_message_role if self.model is not None else 'assistant'
+        assistant_message_role = self.model.assistant_message_role if self.model else 'assistant'
         for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None:
+            if m.role == assistant_message_role and m.metrics:
                 for k, v in m.metrics.__dict__.items():
                     if k == 'timer':
                         continue
-                    if v is not None:
+                    if v:
                         aggregated_metrics[k].append(v)
-        if aggregated_metrics is not None:
+        if aggregated_metrics:
             aggregated_metrics = dict(aggregated_metrics)
         return aggregated_metrics
 
@@ -4922,7 +4965,7 @@ class Agent:
         if self.images is None:
             self.images = []
         self.images.append(image)
-        if self.run_response is not None:
+        if self.run_response:
             if self.run_response.images is None:
                 self.run_response.images = []
             self.run_response.images.append(image)
@@ -4931,7 +4974,7 @@ class Agent:
         if self.videos is None:
             self.videos = []
         self.videos.append(video)
-        if self.run_response is not None:
+        if self.run_response:
             if self.run_response.videos is None:
                 self.run_response.videos = []
             self.run_response.videos.append(video)
@@ -4940,7 +4983,7 @@ class Agent:
         if self.audio is None:
             self.audio = []
         self.audio.append(audio)
-        if self.run_response is not None:
+        if self.run_response:
             if self.run_response.audio is None:
                 self.run_response.audio = []
             self.run_response.audio.append(audio)
@@ -4962,9 +5005,9 @@ class Agent:
                 message.role = 'system'
         reasoning_content: str = ''
         reasoning_agent_response: RunResponse = self.reasoning_agent.run(messages=run_messages.get_input_messages())
-        if reasoning_agent_response.messages is not None:
+        if reasoning_agent_response.messages:
             for msg in reasoning_agent_response.messages:
-                if msg.reasoning_content is not None:
+                if msg.reasoning_content:
                     reasoning_content = msg.reasoning_content
                     break
         ds_reasoning_message = Message(role='assistant', content=f'<thinking>\n{reasoning_content}\n</thinking>', reasoning_content=reasoning_content)
@@ -5094,7 +5137,7 @@ class Agent:
             history.insert(0, chat[1].to_dict())
             history.insert(0, chat[0].to_dict())
             chats_added += 1
-            if num_chats is not None and chats_added >= num_chats:
+            if num_chats and chats_added >= num_chats:
                 break
         return json.dumps(history)
 
@@ -5109,7 +5152,7 @@ class Agent:
         retrieval_timer = Timer()
         retrieval_timer.start()
         docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query)
-        if docs_from_knowledge is not None:
+        if docs_from_knowledge:
             references = MessageReferences(query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4))
             if self.run_response.extra_data is None:
                 self.run_response.extra_data = RunResponseExtraData()
@@ -5126,7 +5169,7 @@ class Agent:
         retrieval_timer = Timer()
         retrieval_timer.start()
         docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query)
-        if docs_from_knowledge is not None:
+        if docs_from_knowledge:
             references = MessageReferences(query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4))
             if self.run_response.extra_data is None:
                 self.run_response.extra_data = RunResponseExtraData()
@@ -5166,12 +5209,12 @@ class Agent:
 
     def _create_run_data(self) -> Dict[str, Any]:
         run_response_format = 'text'
-        if self.response_model is not None:
+        if self.response_model:
             run_response_format = 'json'
         elif self.markdown:
             run_response_format = 'markdown'
         functions = {}
-        if self.model is not None and self.model._functions is not None:
+        if self.model and self.model._functions:
             functions = {f_name: func.to_dict() for f_name, func in self.model._functions.items() if isinstance(func, Function)}
         run_data: Dict[str, Any] = {'functions': functions, 'metrics': self.run_response.metrics}
         if self.monitoring:
@@ -5181,7 +5224,7 @@ class Agent:
     def print_response(self, message: Union[List, Dict, str, Message] = None, *, messages: List[Union[Dict, Message]] = None, audio: Sequence[Audio] = None, images: Sequence[Image] = None, videos: Sequence[Video] = None, files: Sequence[File] = None, stream: bool = False, markdown: bool = False, show_message: bool = True, show_reasoning: bool = True, show_full_reasoning: bool = False, console: Any = None, tags_to_include_in_markdown: Set[str] = {'think', 'thinking'}, **kwargs: Any) -> None:
         if markdown:
             self.markdown = True
-        if self.response_model is not None:
+        if self.response_model:
             self.markdown = False
         with Live(console=console) as live_log:
             status = Status('Thinking...', spinner='aesthetic', speed=0.4, refresh_per_second=10)
@@ -5197,26 +5240,26 @@ class Agent:
             run_response = self.run(message=message, messages=messages, audio=audio, images=images, videos=videos, files=files, stream=False, **kwargs)
             response_timer.stop()
             reasoning_steps = []
-            if isinstance(run_response, RunResponse) and run_response.extra_data is not None and run_response.extra_data.reasoning_steps is not None:
+            if isinstance(run_response, RunResponse) and run_response.extra_data and run_response.extra_data.reasoning_steps:
                 reasoning_steps = run_response.extra_data.reasoning_steps
             if len(reasoning_steps) > 0 and show_reasoning:
                 for i, step in enumerate(reasoning_steps, 1):
                     step_content = Text.assemble()
-                    if step.title is not None:
+                    if step.title:
                         step_content.append(f'{step.title}\n', 'bold')
-                    if step.action is not None:
+                    if step.action:
                         step_content.append(f'{step.action}\n', 'dim')
-                    if step.result is not None:
+                    if step.result:
                         step_content.append(Text.from_markup(step.result, style='dim'))
                     if show_full_reasoning:
-                        if step.reasoning is not None:
+                        if step.reasoning:
                             step_content.append(Text.from_markup(f'\n[bold]Reasoning:[/bold] {step.reasoning}', style='dim'))
-                        if step.confidence is not None:
+                        if step.confidence:
                             step_content.append(Text.from_markup(f'\n[bold]Confidence:[/bold] {step.confidence}', style='dim'))
                     reasoning_panel = create_panel(content=step_content, title=f'Reasoning step {i}', border_style='green')
                     panels.append(reasoning_panel)
                 live_log.update(Group(*panels))
-            if isinstance(run_response, RunResponse) and run_response.thinking is not None:
+            if isinstance(run_response, RunResponse) and run_response.thinking:
                 thinking_panel = create_panel(content=Text(run_response.thinking), title=f'Thinking ({response_timer.elapsed:.1f}s)', border_style='green')
                 panels.append(thinking_panel)
                 live_log.update(Group(*panels))
@@ -5238,7 +5281,7 @@ class Agent:
                         response_content_batch = Markdown(escaped_content)
                     else:
                         response_content_batch = run_response.get_content_as_string(indent=4)
-                elif self.response_model is not None and isinstance(run_response.content, Base):
+                elif self.response_model and isinstance(run_response.content, Base):
                     try:
                         response_content_batch = JSON(json.dumps(run_response.content.to_dict()), indent=2)
                     except Exception as e:
@@ -5250,7 +5293,7 @@ class Agent:
                         print(f'Failed to convert response to JSON: {e}')
             response_panel = create_panel(content=response_content_batch, title=f'Response ({response_timer.elapsed:.1f}s)', border_style='blue')
             panels.append(response_panel)
-            if isinstance(run_response, RunResponse) and run_response.citations is not None and run_response.citations.urls is not None:
+            if isinstance(run_response, RunResponse) and run_response.citations and run_response.citations.urls:
                 md_content = '\n'.join(f'{i + 1}. [{citation.title or citation.url}]({citation.url})'
                     for i, citation in enumerate(run_response.citations.urls)
                     if citation.url)
@@ -5393,10 +5436,10 @@ class Team:
 
     def _set_monitoring(self) -> None:
         monitor_env = os.getenv('AGNO_MONITOR')
-        if monitor_env is not None:
+        if monitor_env:
             self.monitoring = monitor_env.lower() == 'true'
         telemetry_env = os.getenv('AGNO_TELEMETRY')
-        if telemetry_env is not None:
+        if telemetry_env:
             self.telemetry = telemetry_env.lower() == 'true'
 
     def _initialize_member(self, member: Union['Team', Agent]):
@@ -5429,9 +5472,9 @@ class Team:
         self.read_from_storage()
         if self.memory is None:
             self.memory = TeamMemory()
-        if self.context is not None:
+        if self.context:
             self._resolve_run_context()
-        if self.response_model is not None and self.parse_response:
+        if self.response_model and self.parse_response:
             stream = False
             print('Disabling stream as response_model is set')
         self._configure_model(show_tool_calls=show_tool_calls)
@@ -5441,7 +5484,7 @@ class Team:
             run_id = str(uuid.uuid4())
             self.run_id = run_id
             print(f'Team Run Start: {self.run_id}\nMode: "{self.mode}"')
-            if message is not None:
+            if message:
                 if isinstance(message, str):
                     self.run_input = message
                 elif isinstance(message, Message):
@@ -5449,7 +5492,7 @@ class Team:
                 else:
                     self.run_input = message
             _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
-            if self.tools is not None:
+            if self.tools:
                 for tool in self.tools:
                     _tools.append(tool)
             if self.read_team_history:
@@ -5475,7 +5518,7 @@ class Team:
                     _tools.append(self.set_team_context)
             self._add_tools_to_model(self.model, tools=_tools)
             self.run_response = TeamRunResponse(run_id=self.run_id, session_id=self.session_id, team_id=self.team_id)
-            self.run_response.model = self.model.id if self.model is not None else None
+            self.run_response.model = self.model.id if self.model else None
             if self.mode == 'route':
                 run_messages: RunMessages = self.get_run_messages(run_response=self.run_response, message=message,
                                                                   audio=audio, images=images, videos=videos,
@@ -5490,7 +5533,7 @@ class Team:
             else:
                 self._run(run_response=self.run_response, run_messages=run_messages)
                 return self.run_response
-        if last_exception is not None:
+        if last_exception:
             print(
                 f'Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})')
             raise last_exception
@@ -5509,13 +5552,13 @@ class Team:
         7.解析任何结构化输出
         8.记录团队跑步记录
         """
-        if self.reasoning or self.reasoning_model is not None:
+        if self.reasoning or self.reasoning_model:
             reasoning_generator = self._reason(run_response=run_response, run_messages=run_messages)
             collections.deque(reasoning_generator, maxlen=0)
         self.run_messages = run_messages
         index_of_last_user_message = len(run_messages.messages)
         model_response = self.model.response(messages=run_messages.messages)
-        if (self.response_model is not None) and not self.use_json_mode and (model_response.parsed is not None):
+        if self.response_model and not self.use_json_mode and model_response.parsed:
             run_response.content = model_response.parsed
             run_response.content_type = self.response_model.__name__
         else:
@@ -5523,29 +5566,29 @@ class Team:
                 run_response.content = model_response.content
             else:
                 run_response.content += model_response.content
-        if model_response.thinking is not None:
+        if model_response.thinking:
             if not run_response.thinking:
                 run_response.thinking = model_response.thinking
             else:
                 run_response.thinking += model_response.thinking
-        if model_response.citations is not None:
+        if model_response.citations:
             run_response.citations = model_response.citations
-        if model_response.tool_calls is not None:
+        if model_response.tool_calls:
             if run_response.tools is None:
                 run_response.tools = model_response.tool_calls
             else:
                 run_response.tools.extend(model_response.tool_calls)
         run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
-        if model_response.audio is not None:
+        if model_response.audio:
             run_response.response_audio = model_response.audio
         run_response.created_at = model_response.created_at
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         run_response.messages = messages_for_run_response
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
-        if run_messages.system_message is not None:
+        if run_messages.system_message:
             self.memory.add_system_message(run_messages.system_message, system_message_role='system')
         messages_for_memory: List[Message] = (
-            [run_messages.user_message] if run_messages.user_message is not None else [])
+            [run_messages.user_message] if run_messages.user_message else [])
         for _rm in run_messages.messages[index_of_last_user_message:]:
             if _rm.add_to_agent_memory:
                 messages_for_memory.append(_rm)
@@ -5553,15 +5596,15 @@ class Team:
             self.memory.add_messages(messages=messages_for_memory)
         team_run = TeamRun(response=run_response)
         team_run.message = run_messages.user_message
-        if self.memory is not None and self.memory.create_user_memories and self.memory.update_user_memories_after_run and run_messages.user_message is not None:
+        if self.memory and self.memory.create_user_memories and self.memory.update_user_memories_after_run and run_messages.user_message:
             self.memory.update_memory(input=run_messages.user_message.get_content_string())
         self.memory.add_team_run(team_run)
         self.write_to_storage()
-        if self.response_model is not None:
+        if self.response_model:
             if isinstance(run_response.content, str) and self.parse_response:
                 try:
                     parsed_response_content = parse_response_model_str(run_response.content, self.response_model)
-                    if parsed_response_content is not None:
+                    if parsed_response_content:
                         run_response.content = parsed_response_content
                         run_response.content_type = self.response_model.__name__
                     else:
@@ -5570,12 +5613,12 @@ class Team:
                     print(f'Failed to convert response to output model: {e}')
             else:
                 print('Something went wrong. Run response content is not a string')
-        elif self._member_response_model is not None:
+        elif self._member_response_model:
             if isinstance(run_response.content, str):
                 try:
                     parsed_response_content = parse_response_model_str(run_response.content,
                                                                        self._member_response_model)
-                    if parsed_response_content is not None:
+                    if parsed_response_content:
                         run_response.content = parsed_response_content
                         run_response.content_type = self._member_response_model.__name__
                     else:
@@ -5599,7 +5642,7 @@ class Team:
         6.将会话保存到存储
         7.记录团队运行日志
         """
-        if self.reasoning or self.reasoning_model is not None:
+        if self.reasoning or self.reasoning_model:
             reasoning_generator = self._reason(run_response=run_response, run_messages=run_messages)
             yield from reasoning_generator
         self.run_messages = run_messages
@@ -5611,37 +5654,37 @@ class Team:
         for model_response_chunk in model_stream:
             if model_response_chunk.event == ResponseEvent.res.value:
                 should_yield = False
-                if model_response_chunk.content is not None:
+                if model_response_chunk.content:
                     if not full_model_response.content:
                         full_model_response.content = model_response_chunk.content
                     else:
                         full_model_response.content += model_response_chunk.content
                     should_yield = True
-                if model_response_chunk.thinking is not None:
+                if model_response_chunk.thinking:
                     if not full_model_response.thinking:
                         full_model_response.thinking = model_response_chunk.thinking
                     else:
                         full_model_response.thinking += model_response_chunk.thinking
                     should_yield = True
-                if model_response_chunk.citations is not None:
+                if model_response_chunk.citations:
                     full_model_response.citations = model_response_chunk.citations
                     should_yield = True
-                if model_response_chunk.audio is not None:
+                if model_response_chunk.audio:
                     if full_model_response.audio is None:
                         full_model_response.audio = AudioResponse(id=str(uuid.uuid4()), content='', transcript='')
-                    if model_response_chunk.audio.id is not None:
+                    if model_response_chunk.audio.id:
                         full_model_response.audio.id = model_response_chunk.audio.id
-                    if model_response_chunk.audio.content is not None:
+                    if model_response_chunk.audio.content:
                         full_model_response.audio.content += model_response_chunk.audio.content
-                    if model_response_chunk.audio.transcript is not None:
+                    if model_response_chunk.audio.transcript:
                         full_model_response.audio.transcript += model_response_chunk.audio.transcript
-                    if model_response_chunk.audio.expires_at is not None:
+                    if model_response_chunk.audio.expires_at:
                         full_model_response.audio.expires_at = model_response_chunk.audio.expires_at
-                    if model_response_chunk.audio.mime_type is not None:
+                    if model_response_chunk.audio.mime_type:
                         full_model_response.audio.mime_type = model_response_chunk.audio.mime_type
-                    if model_response_chunk.audio.sample_rate is not None:
+                    if model_response_chunk.audio.sample_rate:
                         full_model_response.audio.sample_rate = model_response_chunk.audio.sample_rate
-                    if model_response_chunk.audio.channels is not None:
+                    if model_response_chunk.audio.channels:
                         full_model_response.audio.channels = model_response_chunk.audio.channels
                     should_yield = True
                 if should_yield:
@@ -5652,7 +5695,7 @@ class Team:
                                                     created_at=model_response_chunk.created_at)
             elif model_response_chunk.event == ResponseEvent.start.value:
                 tool_calls_list = model_response_chunk.tool_calls
-                if tool_calls_list is not None:
+                if tool_calls_list:
                     if run_response.tools is None:
                         run_response.tools = tool_calls_list
                     else:
@@ -5663,15 +5706,15 @@ class Team:
                                                     event=RunEvent.tool_call_started, from_run_response=run_response)
             elif model_response_chunk.event == ResponseEvent.end.value:
                 tool_calls_list = model_response_chunk.tool_calls
-                if tool_calls_list is not None:
+                if tool_calls_list:
                     if run_response.tools:
                         tool_call_index_map = {tc['tool_call_id']: i
                                                for i, tc in enumerate(run_response.tools)
-                                               if tc.get('tool_call_id') is not None}
+                                               if tc.get('tool_call_id')}
                         for tool_call_dict in tool_calls_list:
                             tool_call_id = tool_call_dict.get('tool_call_id')
                             index = tool_call_index_map.get(tool_call_id)
-                            if index is not None:
+                            if index:
                                 run_response.tools[index] = tool_call_dict
                     else:
                         run_response.tools = tool_calls_list
@@ -5680,21 +5723,21 @@ class Team:
                                                         event=RunEvent.tool_call_completed,
                                                         from_run_response=run_response)
         run_response.created_at = full_model_response.created_at
-        if full_model_response.content is not None:
+        if full_model_response.content:
             run_response.content = full_model_response.content
-        if full_model_response.thinking is not None:
+        if full_model_response.thinking:
             run_response.thinking = full_model_response.thinking
-        if full_model_response.audio is not None:
+        if full_model_response.audio:
             run_response.response_audio = full_model_response.audio
-        if full_model_response.citations is not None:
+        if full_model_response.citations:
             run_response.citations = full_model_response.citations
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         run_response.messages = messages_for_run_response
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
-        if run_messages.system_message is not None:
+        if run_messages.system_message:
             self.memory.add_system_message(run_messages.system_message, system_message_role='system')
         messages_for_memory: List[Message] = (
-            [run_messages.user_message] if run_messages.user_message is not None else [])
+            [run_messages.user_message] if run_messages.user_message else [])
         for _rm in run_messages.messages[index_of_last_user_message:]:
             if _rm.add_to_agent_memory:
                 messages_for_memory.append(_rm)
@@ -5702,7 +5745,7 @@ class Team:
             self.memory.add_messages(messages=messages_for_memory)
         team_run = TeamRun(response=run_response)
         team_run.message = run_messages.user_message
-        if self.memory is not None and self.memory.create_user_memories and self.memory.update_user_memories_after_run and run_messages.user_message is not None:
+        if self.memory and self.memory.create_user_memories and self.memory.update_user_memories_after_run and run_messages.user_message:
             self.memory.update_memory(input=run_messages.user_message.get_content_string())
         self.memory.add_team_run(team_run)
         self.write_to_storage()
@@ -5724,9 +5767,9 @@ class Team:
         self.read_from_storage()
         if self.memory is None:
             self.memory = TeamMemory()
-        if self.context is not None:
+        if self.context:
             self._resolve_run_context()
-        if self.response_model is not None and self.parse_response:
+        if self.response_model and self.parse_response:
             stream = False
             print('Disabling stream as response_model is set')
         self._configure_model(show_tool_calls=show_tool_calls)
@@ -5737,7 +5780,7 @@ class Team:
             self.run_id = run_id
             print(f'Team Run Start: {self.run_id}')
             print(f'Mode: "{self.mode}"')
-            if message is not None:
+            if message:
                 if isinstance(message, str):
                     self.run_input = message
                 elif isinstance(message, Message):
@@ -5745,7 +5788,7 @@ class Team:
                 else:
                     self.run_input = message
             _tools: List[Union[Function, Callable, Toolkit, Dict]] = []
-            if self.tools is not None:
+            if self.tools:
                 for tool in self.tools:
                     _tools.append(tool)
             if self.read_team_history:
@@ -5774,7 +5817,7 @@ class Team:
                     _tools.append(self.set_team_context)
             self._add_tools_to_model(self.model, tools=_tools)
             self.run_response = TeamRunResponse(run_id=self.run_id, session_id=self.session_id, team_id=self.team_id)
-            self.run_response.model = self.model.id if self.model is not None else None
+            self.run_response.model = self.model.id if self.model else None
             if self.mode == 'route':
                 run_messages: RunMessages = self.get_run_messages(run_response=self.run_response, message=message,
                                                                   audio=audio, images=images, videos=videos,
@@ -5789,7 +5832,7 @@ class Team:
             else:
                 await self._arun(run_response=self.run_response, run_messages=run_messages)
                 return self.run_response
-        if last_exception is not None:
+        if last_exception:
             print(
                 f'Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})')
             raise last_exception
@@ -5808,14 +5851,14 @@ class Team:
         7.解析任何结构化输出
         8.记录团队运行记录
         """
-        if self.reasoning or self.reasoning_model is not None:
+        if self.reasoning or self.reasoning_model:
             reasoning_generator = self._areason(run_response=run_response, run_messages=run_messages)
             async for _ in reasoning_generator:
                 pass
         self.run_messages = run_messages
         index_of_last_user_message = len(run_messages.messages)
         model_response = await self.model.aresponse(messages=run_messages.messages)
-        if (self.response_model is not None) and not self.use_json_mode and (model_response.parsed is not None):
+        if (self.response_model) and not self.use_json_mode and (model_response.parsed):
             run_response.content = model_response.parsed
             run_response.content_type = self.response_model.__name__
         else:
@@ -5823,29 +5866,29 @@ class Team:
                 run_response.content = model_response.content
             else:
                 run_response.content += model_response.content
-        if model_response.thinking is not None:
+        if model_response.thinking:
             if not run_response.thinking:
                 run_response.thinking = model_response.thinking
             else:
                 run_response.thinking += model_response.thinking
-        if model_response.citations is not None:
+        if model_response.citations:
             run_response.citations = model_response.citations
-        if model_response.tool_calls is not None:
+        if model_response.tool_calls:
             if run_response.tools is None:
                 run_response.tools = model_response.tool_calls
             else:
                 run_response.tools.extend(model_response.tool_calls)
         run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
-        if model_response.audio is not None:
+        if model_response.audio:
             run_response.response_audio = model_response.audio
         run_response.created_at = model_response.created_at
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         run_response.messages = messages_for_run_response
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
-        if run_messages.system_message is not None:
+        if run_messages.system_message:
             self.memory.add_system_message(run_messages.system_message, system_message_role='system')
         messages_for_memory: List[Message] = (
-            [run_messages.user_message] if run_messages.user_message is not None else [])
+            [run_messages.user_message] if run_messages.user_message else [])
         for _rm in run_messages.messages[index_of_last_user_message:]:
             if _rm.add_to_agent_memory:
                 messages_for_memory.append(_rm)
@@ -5853,15 +5896,15 @@ class Team:
             self.memory.add_messages(messages=messages_for_memory)
         team_run = TeamRun(response=run_response)
         team_run.message = run_messages.user_message
-        if self.memory is not None and self.memory.create_user_memories and self.memory.update_user_memories_after_run and run_messages.user_message is not None:
+        if self.memory and self.memory.create_user_memories and self.memory.update_user_memories_after_run and run_messages.user_message:
             await self.memory.aupdate_memory(input=run_messages.user_message.get_content_string())
         self.memory.add_team_run(team_run)
         self.write_to_storage()
-        if self.response_model is not None:
+        if self.response_model:
             if isinstance(run_response.content, str) and self.parse_response:
                 try:
                     parsed_response_content = parse_response_model_str(run_response.content, self.response_model)
-                    if parsed_response_content is not None:
+                    if parsed_response_content:
                         run_response.content = parsed_response_content
                         run_response.content_type = self.response_model.__name__
                     else:
@@ -5870,12 +5913,12 @@ class Team:
                     print(f'Failed to convert response to output model: {e}')
             else:
                 print('Something went wrong. Run response content is not a string')
-        elif self._member_response_model is not None:
+        elif self._member_response_model:
             if isinstance(run_response.content, str):
                 try:
                     parsed_response_content = parse_response_model_str(run_response.content,
                                                                        self._member_response_model)
-                    if parsed_response_content is not None:
+                    if parsed_response_content:
                         run_response.content = parsed_response_content
                         run_response.content_type = self._member_response_model.__name__
                     else:
@@ -5899,7 +5942,7 @@ class Team:
         6.将会话保存到存储
         7.记录团队运行日志
         """
-        if self.reasoning or self.reasoning_model is not None:
+        if self.reasoning or self.reasoning_model:
             reasoning_generator = self._areason(run_response=run_response, run_messages=run_messages)
             async for reasoning_response in reasoning_generator:
                 yield reasoning_response
@@ -5912,37 +5955,37 @@ class Team:
         async for model_response_chunk in model_stream:
             if model_response_chunk.event == ResponseEvent.res.value:
                 should_yield = False
-                if model_response_chunk.content is not None:
+                if model_response_chunk.content:
                     if not full_model_response.content:
                         full_model_response.content = model_response_chunk.content
                     else:
                         full_model_response.content += model_response_chunk.content
                     should_yield = True
-                if model_response_chunk.thinking is not None:
+                if model_response_chunk.thinking:
                     if not full_model_response.thinking:
                         full_model_response.thinking = model_response_chunk.thinking
                     else:
                         full_model_response.thinking += model_response_chunk.thinking
                     should_yield = True
-                if model_response_chunk.citations is not None:
+                if model_response_chunk.citations:
                     full_model_response.citations = model_response_chunk.citations
                     should_yield = True
-                if model_response_chunk.audio is not None:
+                if model_response_chunk.audio:
                     if full_model_response.audio is None:
                         full_model_response.audio = AudioResponse(id=str(uuid.uuid4()), content='', transcript='')
-                    if model_response_chunk.audio.id is not None:
+                    if model_response_chunk.audio.id:
                         full_model_response.audio.id = model_response_chunk.audio.id
-                    if model_response_chunk.audio.content is not None:
+                    if model_response_chunk.audio.content:
                         full_model_response.audio.content += model_response_chunk.audio.content
-                    if model_response_chunk.audio.transcript is not None:
+                    if model_response_chunk.audio.transcript:
                         full_model_response.audio.transcript += model_response_chunk.audio.transcript
-                    if model_response_chunk.audio.expires_at is not None:
+                    if model_response_chunk.audio.expires_at:
                         full_model_response.audio.expires_at = model_response_chunk.audio.expires_at
-                    if model_response_chunk.audio.mime_type is not None:
+                    if model_response_chunk.audio.mime_type:
                         full_model_response.audio.mime_type = model_response_chunk.audio.mime_type
-                    if model_response_chunk.audio.sample_rate is not None:
+                    if model_response_chunk.audio.sample_rate:
                         full_model_response.audio.sample_rate = model_response_chunk.audio.sample_rate
-                    if model_response_chunk.audio.channels is not None:
+                    if model_response_chunk.audio.channels:
                         full_model_response.audio.channels = model_response_chunk.audio.channels
                     should_yield = True
                 if should_yield:
@@ -5953,7 +5996,7 @@ class Team:
                                                     created_at=model_response_chunk.created_at)
             elif model_response_chunk.event == ResponseEvent.start.value:
                 tool_calls_list = model_response_chunk.tool_calls
-                if tool_calls_list is not None:
+                if tool_calls_list:
                     if run_response.tools is None:
                         run_response.tools = tool_calls_list
                     else:
@@ -5964,15 +6007,15 @@ class Team:
                                                     event=RunEvent.tool_call_started, from_run_response=run_response)
             elif model_response_chunk.event == ResponseEvent.end.value:
                 tool_calls_list = model_response_chunk.tool_calls
-                if tool_calls_list is not None:
+                if tool_calls_list:
                     if run_response.tools:
                         tool_call_index_map = {tc['tool_call_id']: i
                                                for i, tc in enumerate(run_response.tools)
-                                               if tc.get('tool_call_id') is not None}
+                                               if tc.get('tool_call_id')}
                         for tool_call_dict in tool_calls_list:
                             tool_call_id = tool_call_dict.get('tool_call_id')
                             index = tool_call_index_map.get(tool_call_id)
-                            if index is not None:
+                            if index:
                                 run_response.tools[index] = tool_call_dict
                     else:
                         run_response.tools = tool_calls_list
@@ -5980,24 +6023,24 @@ class Team:
                         yield self._create_run_response(content=model_response_chunk.content,
                                                         event=RunEvent.tool_call_completed,
                                                         from_run_response=run_response)
-        if (self.response_model is not None) and not self.use_json_mode and (full_model_response.parsed is not None):
+        if (self.response_model) and not self.use_json_mode and (full_model_response.parsed):
             run_response.content = full_model_response.parsed
         run_response.created_at = full_model_response.created_at
-        if full_model_response.content is not None:
+        if full_model_response.content:
             run_response.content = full_model_response.content
-        if full_model_response.thinking is not None:
+        if full_model_response.thinking:
             run_response.thinking = full_model_response.thinking
-        if full_model_response.audio is not None:
+        if full_model_response.audio:
             run_response.response_audio = full_model_response.audio
-        if full_model_response.citations is not None:
+        if full_model_response.citations:
             run_response.citations = full_model_response.citations
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         run_response.messages = messages_for_run_response
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
-        if run_messages.system_message is not None:
+        if run_messages.system_message:
             self.memory.add_system_message(run_messages.system_message, system_message_role='system')
         messages_for_memory: List[Message] = (
-            [run_messages.user_message] if run_messages.user_message is not None else [])
+            [run_messages.user_message] if run_messages.user_message else [])
         for _rm in run_messages.messages[index_of_last_user_message:]:
             if _rm.add_to_agent_memory:
                 messages_for_memory.append(_rm)
@@ -6005,7 +6048,7 @@ class Team:
             self.memory.add_messages(messages=messages_for_memory)
         team_run = TeamRun(response=run_response)
         team_run.message = run_messages.user_message
-        if self.memory is not None and self.memory.create_user_memories and self.memory.update_user_memories_after_run and run_messages.user_message is not None:
+        if self.memory and self.memory.create_user_memories and self.memory.update_user_memories_after_run and run_messages.user_message:
             await self.memory.aupdate_memory(input=run_messages.user_message.get_content_string())
         self.memory.add_team_run(team_run)
         self.write_to_storage()
@@ -6047,28 +6090,28 @@ class Team:
             member_markdown = {}
             if markdown:
                 for member in self.members:
-                    if isinstance(member, Agent) and member.agent_id is not None:
+                    if isinstance(member, Agent) and member.agent_id:
                         member_markdown[member.agent_id] = True
-                    if isinstance(member, Team) and member.team_id is not None:
+                    if isinstance(member, Team) and member.team_id:
                         member_markdown[member.team_id] = True
                 team_markdown = True
-            if self.response_model is not None:
+            if self.response_model:
                 team_markdown = False
             for member in self.members:
-                if member.response_model is not None and isinstance(member, Agent) and member.agent_id is not None:
+                if member.response_model and isinstance(member, Agent) and member.agent_id:
                     member_markdown[member.agent_id] = False
-                if member.response_model is not None and isinstance(member, Team) and member.team_id is not None:
+                if member.response_model and isinstance(member, Team) and member.team_id:
                     member_markdown[member.team_id] = False
             reasoning_steps = []
             if isinstance(run_response,
-                          TeamRunResponse) and run_response.extra_data is not None and run_response.extra_data.reasoning_steps is not None:
+                          TeamRunResponse) and run_response.extra_data and run_response.extra_data.reasoning_steps:
                 reasoning_steps = run_response.extra_data.reasoning_steps
             if len(reasoning_steps) > 0 and show_reasoning:
                 for i, step in enumerate(reasoning_steps, 1):
                     reasoning_panel = self._build_reasoning_step_panel(i, step, show_reasoning_verbose)
                     panels.append(reasoning_panel)
                 live_console.update(Group(*panels))
-            if isinstance(run_response, TeamRunResponse) and run_response.thinking is not None:
+            if isinstance(run_response, TeamRunResponse) and run_response.thinking:
                 thinking_panel = create_panel(content=Text(run_response.thinking),
                                               title=f'Thinking ({response_timer.elapsed:.1f}s)', border_style='green')
                 panels.append(thinking_panel)
@@ -6078,7 +6121,7 @@ class Team:
                     for member_response in run_response.member_responses:
                         reasoning_steps = []
                         if isinstance(member_response,
-                                      RunResponse) and member_response.extra_data is not None and member_response.extra_data.reasoning_steps is not None:
+                                      RunResponse) and member_response.extra_data and member_response.extra_data.reasoning_steps:
                             reasoning_steps.extend(member_response.extra_data.reasoning_steps)
                         if len(reasoning_steps) > 0 and show_reasoning:
                             for i, step in enumerate(reasoning_steps, 1):
@@ -6088,9 +6131,9 @@ class Team:
                                 panels.append(member_reasoning_panel)
                         if self.show_tool_calls and hasattr(member_response, 'tools') and member_response.tools:
                             member_name = None
-                            if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                            if isinstance(member_response, RunResponse) and member_response.agent_id:
                                 member_name = self._get_member_name(member_response.agent_id)
-                            elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                            elif isinstance(member_response, TeamRunResponse) and member_response.team_id:
                                 member_name = self._get_member_name(member_response.team_id)
                             if member_name:
                                 formatted_calls = format_tool_calls(member_response.tools)
@@ -6110,22 +6153,22 @@ class Team:
                                     live_console.update(Group(*panels))
                         show_markdown = False
                         if member_markdown:
-                            if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                            if isinstance(member_response, RunResponse) and member_response.agent_id:
                                 show_markdown = member_markdown.get(member_response.agent_id, False)
-                            elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                            elif isinstance(member_response, TeamRunResponse) and member_response.team_id:
                                 show_markdown = member_markdown.get(member_response.team_id, False)
                         member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
                             member_response, tags_to_include_in_markdown, show_markdown=show_markdown)
-                        if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                        if isinstance(member_response, RunResponse) and member_response.agent_id:
                             member_response_panel = create_panel(content=member_response_content,
                                                                  title=f'{self._get_member_name(member_response.agent_id)} Response',
                                                                  border_style='magenta')
-                        elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                        elif isinstance(member_response, TeamRunResponse) and member_response.team_id:
                             member_response_panel = create_panel(content=member_response_content,
                                                                  title=f'{self._get_member_name(member_response.team_id)} Response',
                                                                  border_style='magenta')
                         panels.append(member_response_panel)
-                        if member_response.citations is not None and member_response.citations.urls is not None:
+                        if member_response.citations and member_response.citations.urls:
                             md_content = '\n'.join(
                                 f'{i + 1}. [{citation.title or citation.url}]({citation.url})' for i, citation in
                                 enumerate(member_response.citations.urls) if citation.url)
@@ -6154,7 +6197,7 @@ class Team:
                 response_panel = create_panel(content=response_content_batch,
                                               title=f'Response ({response_timer.elapsed:.1f}s)', border_style='blue')
                 panels.append(response_panel)
-                if run_response.citations is not None and run_response.citations.urls is not None:
+                if run_response.citations and run_response.citations.urls:
                     md_content = '\n'.join(
                         f'{i + 1}. [{citation.title or citation.url}]({citation.url})' for i, citation in
                         enumerate(run_response.citations.urls) if citation.url)
@@ -6168,16 +6211,16 @@ class Team:
     def _build_reasoning_step_panel(self, step_idx: int, step: ReasoningStep, show_reasoning_verbose: bool = False,
                                     color: str = 'green'):
         step_content = Text.assemble()
-        if step.title is not None:
+        if step.title:
             step_content.append(f'{step.title}\n', 'bold')
-        if step.action is not None:
+        if step.action:
             step_content.append(f'{step.action}\n', 'dim')
-        if step.result is not None:
+        if step.result:
             step_content.append(Text.from_markup(step.result, style='dim'))
         if show_reasoning_verbose:
-            if step.reasoning is not None:
+            if step.reasoning:
                 step_content.append(Text.from_markup(f'\n[bold]Reasoning:[/bold] {step.reasoning}', style='dim'))
-            if step.confidence is not None:
+            if step.confidence:
                 step_content.append(Text.from_markup(f'\n[bold]Confidence:[/bold] {step.confidence}', style='dim'))
         return create_panel(content=step_content, title=f'Reasoning step {step_idx}', border_style=color)
 
@@ -6227,15 +6270,15 @@ class Team:
 
     def _aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
         aggregated_metrics: Dict[str, Any] = collections.defaultdict(list)
-        assistant_message_role = self.model.assistant_message_role if self.model is not None else 'assistant'
+        assistant_message_role = self.model.assistant_message_role if self.model else 'assistant'
         for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None:
+            if m.role == assistant_message_role and m.metrics:
                 for k, v in m.metrics.__dict__.items():
                     if k == 'timer':
                         continue
-                    if v is not None:
+                    if v:
                         aggregated_metrics[k].append(v)
-        if aggregated_metrics is not None:
+        if aggregated_metrics:
             aggregated_metrics = dict(aggregated_metrics)
         return aggregated_metrics
 
@@ -6250,9 +6293,9 @@ class Team:
                 message.role = 'system'
         reasoning_content: str = ''
         reasoning_agent_response: RunResponse = reasoning_agent.run(messages=run_messages.get_input_messages())
-        if reasoning_agent_response.messages is not None:
+        if reasoning_agent_response.messages:
             for msg in reasoning_agent_response.messages:
-                if msg.reasoning_content is not None:
+                if msg.reasoning_content:
                     reasoning_content = msg.reasoning_content
                     break
         reasoning_message = Message(role='assistant', content=f'<thinking>\n{reasoning_content}\n</thinking>',
@@ -6334,15 +6377,15 @@ class Team:
             rr.formatted_tool_calls = formatted_tool_calls
         if member_responses:
             rr.member_responses = member_responses
-        if content_type is not None:
+        if content_type:
             rr.content_type = content_type
-        if created_at is not None:
+        if created_at:
             rr.created_at = created_at
         return rr
 
     def _resolve_run_context(self) -> None:
         print('Resolving context')
-        if self.context is not None:
+        if self.context:
             if isinstance(self.context, dict):
                 for ctx_key, ctx_value in self.context.items():
                     if callable(ctx_value):
@@ -6352,7 +6395,7 @@ class Team:
                                 resolved_ctx_value = ctx_value(agent=self)
                             else:
                                 resolved_ctx_value = ctx_value()
-                            if resolved_ctx_value is not None:
+                            if resolved_ctx_value:
                                 self.context[ctx_key] = resolved_ctx_value
                         except Exception as e:
                             print(f'Failed to resolve context for {ctx_key}: {e}')
@@ -6390,9 +6433,9 @@ class Team:
                 self.model.response_format = json_response_format if self.use_json_mode else None
                 self.model.structured_outputs = False
         self.model.show_tool_calls = show_tool_calls
-        if self.tool_choice is not None:
+        if self.tool_choice:
             self.model.tool_choice = self.tool_choice
-        if self.tool_call_limit is not None:
+        if self.tool_call_limit:
             self.model.tool_call_limit = self.tool_call_limit
 
     def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
@@ -6401,7 +6444,7 @@ class Team:
         if len(tools) > 0:
             print('Processing tools for model')
             strict = False
-            if self.response_model is not None and not self.use_json_mode and model.supports_native_structured_outputs:
+            if self.response_model and not self.use_json_mode and model.supports_native_structured_outputs:
                 strict = True
             for tool in tools:
                 if isinstance(tool, Dict):
@@ -6445,17 +6488,17 @@ class Team:
         for idx, member in enumerate(self.members):
             if isinstance(member, Team):
                 system_message_content += f'{indent * " "} - Team: {member.name}\n'
-                if member.members is not None:
+                if member.members:
                     system_message_content += member.get_members_system_message_content(indent=indent + 2)
             else:
                 system_message_content += f'{indent * " "} - Agent {idx + 1}:\n'
-                if member.name is not None:
+                if member.name:
                     system_message_content += f'{indent * " "}   - Name: {member.name}\n'
-                if member.role is not None:
+                if member.role:
                     system_message_content += f'{indent * " "}   - Role: {member.role}\n'
-                if member.description is not None:
+                if member.description:
                     system_message_content += f'{indent * " "}   - Description: {member.description}\n'
-                if member.tools is not None:
+                if member.tools:
                     system_message_content += f'{indent * " "}   - Available tools:\n'
                     tool_name_and_description = []
                     for _tool in member.tools:
@@ -6476,7 +6519,7 @@ class Team:
     def get_system_message(self, audio: Sequence[Audio] = None, images: Sequence[Image] = None,
                            videos: Sequence[Video] = None, files: Sequence[File] = None) -> Optional[Message]:
         instructions: List[str] = []
-        if self.instructions is not None:
+        if self.instructions:
             _instructions = self.instructions
             if callable(self.instructions):
                 _instructions = self.instructions(agent=self)
@@ -6485,7 +6528,7 @@ class Team:
             elif isinstance(_instructions, list):
                 instructions.extend(_instructions)
         _model_instructions = self.model.get_instructions_for_model()
-        if _model_instructions is not None:
+        if _model_instructions:
             instructions.extend(_model_instructions)
         additional_information: List[str] = []
         if self.markdown and self.response_model is None:
@@ -6509,11 +6552,11 @@ class Team:
             system_message_content += '\n'
         if self.enable_agentic_context:
             system_message_content += '你可以而且应该更新团队的背景。使用`set_team_text`工具更新共享团队上下文.\n'
-        if self.name is not None:
+        if self.name:
             system_message_content += f'你是: {self.name}.\n\n'
         if self.success_criteria:
             system_message_content += f'<success_criteria>\n如果满足以下标准，该团队将被视为成功: {self.success_criteria}\n满足条件后停止团队运行.\n</success_criteria>\n\n'
-        if self.description is not None:
+        if self.description:
             system_message_content += f'<description>\n{self.description}\n</description>\n\n'
         if len(instructions) > 0:
             system_message_content += '<instructions>'
@@ -6528,26 +6571,26 @@ class Team:
             for _ai in additional_information:
                 system_message_content += f'\n- {_ai}'
             system_message_content += '\n</additional_information>\n\n'
-        if audio is not None or images is not None or videos is not None or files is not None:
+        if audio or images or videos or files:
             system_message_content += '<attached_media>\n'
             system_message_content += 'You have the following media attached to your message:\n'
-            if audio is not None and len(audio) > 0:
+            if audio and len(audio) > 0:
                 system_message_content += ' - Audio\n'
-            if images is not None and len(images) > 0:
+            if images and len(images) > 0:
                 system_message_content += ' - Images\n'
-            if videos is not None and len(videos) > 0:
+            if videos and len(videos) > 0:
                 system_message_content += ' - Videos\n'
-            if files is not None and len(files) > 0:
+            if files and len(files) > 0:
                 system_message_content += ' - Files\n'
             system_message_content += '</attached_media>\n\n'
         if self.add_state_in_messages:
             system_message_content = self._format_message_with_state_variables(system_message_content)
         system_message_from_model = self.model.get_system_message_for_model()
-        if system_message_from_model is not None:
+        if system_message_from_model:
             system_message_content += system_message_from_model
-        if self.expected_output is not None:
+        if self.expected_output:
             system_message_content += f'<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n'
-        if self.response_model is not None and self.use_json_mode and self.model and self.model.supports_native_structured_outputs:
+        if self.response_model and self.use_json_mode and self.model and self.model.supports_native_structured_outputs:
             system_message_content += f'{self._get_json_output_prompt()}'
         return Message(role='system', content=system_message_content.strip())
 
@@ -6566,7 +6609,7 @@ class Team:
         """
         run_messages = RunMessages()
         system_message = self.get_system_message(images=images, audio=audio, videos=videos, files=files)
-        if system_message is not None:
+        if system_message:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
         if self.enable_team_history:
@@ -6579,7 +6622,7 @@ class Team:
                 print(f'Adding {len(history_copy)} messages from history')
                 run_messages.messages += history_copy
         user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files, **kwargs)
-        if user_message is not None:
+        if user_message:
             run_messages.user_message = user_message
             run_messages.messages.append(user_message)
         return run_messages
@@ -6600,7 +6643,7 @@ class Team:
                     user_message_content = message
                 else:
                     user_message_content = '\n'.join(message)
-            if self.add_context and self.context is not None:
+            if self.add_context and self.context:
                 user_message_content += '\n\n<context>\n'
                 user_message_content += self._convert_context_to_string(self.context) + '\n'
                 user_message_content += '</context>'
@@ -6616,7 +6659,7 @@ class Team:
 
     def _format_message_with_state_variables(self, message: str) -> Any:
         format_variables = collections.ChainMap(self.session_state or {}, self.context or {}, self.extra_data or {},
-                                    {'user_id': self.user_id} if self.user_id is not None else {})
+                                    {'user_id': self.user_id} if self.user_id else {})
         return SafeFormatter().format(message, **format_variables)
 
     def _convert_context_to_string(self, context: Dict[str, Any]) -> str:
@@ -6642,7 +6685,7 @@ class Team:
 
     def _get_json_output_prompt(self) -> str:
         json_output_prompt = 'Provide your output as a JSON containing the following fields:'
-        if self.response_model is not None:
+        if self.response_model:
             if isinstance(self.response_model, str):
                 json_output_prompt += '\n<json_fields>'
                 json_output_prompt += f'\n{self.response_model}'
@@ -6653,22 +6696,22 @@ class Team:
                 json_output_prompt += '\n</json_fields>'
             elif issubclass(self.response_model, Base):
                 json_schema = self.response_model.model_json_schema()
-                if json_schema is not None:
+                if json_schema:
                     response_model_properties = {}
                     json_schema_properties = json_schema.get('properties')
-                    if json_schema_properties is not None:
+                    if json_schema_properties:
                         for field_name, field_properties in json_schema_properties.items():
                             formatted_field_properties = {prop_name: prop_value
                                                           for prop_name, prop_value in field_properties.items()
                                                           if prop_name != 'title'}
                             response_model_properties[field_name] = formatted_field_properties
                     json_schema_defs = json_schema.get('$defs')
-                    if json_schema_defs is not None:
+                    if json_schema_defs:
                         response_model_properties['$defs'] = {}
                         for def_name, def_properties in json_schema_defs.items():
                             def_fields = def_properties.get('properties')
                             formatted_def_properties = {}
-                            if def_fields is not None:
+                            if def_fields:
                                 for field_name, field_properties in def_fields.items():
                                     formatted_field_properties = {prop_name: prop_value
                                                                   for prop_name, prop_value in field_properties.items()
@@ -6695,15 +6738,15 @@ class Team:
         return json_output_prompt
 
     def _update_team_state(self, run_response: Union[TeamRunResponse, RunResponse]) -> None:
-        if run_response.images is not None:
+        if run_response.images:
             if self.images is None:
                 self.images = []
             self.images.extend(run_response.images)
-        if run_response.videos is not None:
+        if run_response.videos:
             if self.videos is None:
                 self.videos = []
             self.videos.extend(run_response.videos)
-        if run_response.audio is not None:
+        if run_response.audio:
             if self.audio is None:
                 self.audio = []
             self.audio.extend(run_response.audio)
@@ -6718,7 +6761,7 @@ class Team:
             history.insert(0, chat[1].to_dict())
             history.insert(0, chat[0].to_dict())
             chats_added += 1
-            if num_chats is not None and chats_added >= num_chats:
+            if num_chats and chats_added >= num_chats:
                 break
         return json.dumps(history)
 
@@ -6758,7 +6801,7 @@ class Team:
                 if context_audio := self.memory.get_team_context_audio():
                     audio.extend([Audio.from_artifact(aud) for aud in context_audio])
             member_agent_task = '您是协作完成任务的代理团队的成员.'
-            if expected_output is not None:
+            if expected_output:
                 member_agent_task += f'\n\n<expected_output>\n{expected_output}\n</expected_output>'
             if team_context_str:
                 member_agent_task += f'\n\n{team_context_str}'
@@ -6811,7 +6854,7 @@ class Team:
                 if context_audio := self.memory.get_team_context_audio():
                     audio.extend([Audio.from_artifact(aud) for aud in context_audio])
             member_agent_task = '您是协作完成任务的代理团队的成员.'
-            if expected_output is not None:
+            if expected_output:
                 member_agent_task += f'\n\n<expected_output>\n{expected_output}\n</expected_output>'
             if team_context_str:
                 member_agent_task += f'\n\n{team_context_str}'
@@ -6994,7 +7037,7 @@ class Team:
                 return (i, member)
             if isinstance(member, Team):
                 result = member._find_member_by_name(agent_name)
-                if result is not None:
+                if result:
                     return (i, member)
         return None
 
@@ -7019,7 +7062,7 @@ class Team:
                 return
             member_agent_index, member_agent = result
             self._initialize_member(member_agent)
-            if member_agent.response_model is not None:
+            if member_agent.response_model:
                 self._member_response_model = member_agent.response_model
             member_agent_task = message.get_content_string()
             if expected_output:
@@ -7060,7 +7103,7 @@ class Team:
                 return
             member_agent_index, member_agent = result
             self._initialize_member(member_agent)
-            if member_agent.response_model is not None:
+            if member_agent.response_model:
                 self._member_response_model = member_agent.response_model
             member_agent_task = message.get_content_string()
             if expected_output:
@@ -7106,24 +7149,24 @@ class Team:
 
     def load_user_memories(self) -> None:
         if self.memory and self.memory.create_user_memories:
-            if self.user_id is not None:
+            if self.user_id:
                 self.memory.user_id = self.user_id
             self.memory.load_user_memories()
-            if self.user_id is not None:
+            if self.user_id:
                 print(f'Memories loaded for user: {self.user_id}')
             else:
                 print('Memories loaded')
 
     def read_from_storage(self) -> Optional[AgentSession]:
-        if self.storage is not None and self.session_id is not None:
+        if self.storage and self.session_id:
             self.team_session = self.storage.read(session_id=self.session_id)
-            if self.team_session is not None:
+            if self.team_session:
                 self.load_team_session(session=self.team_session)
             self.load_user_memories()
         return self.team_session
 
     def write_to_storage(self) -> Optional[AgentSession]:
-        if self.storage is not None:
+        if self.storage:
             self.team_session = self.storage.upsert(session=self._get_team_session())
         return self.team_session
 
@@ -7134,49 +7177,49 @@ class Team:
         self._log_team_session()
 
     def delete_session(self, session_id: str) -> None:
-        if self.storage is not None:
+        if self.storage:
             self.storage.delete_session(session_id=session_id)
 
     def load_team_session(self, session: AgentSession):
-        if self.team_id is None and session.team_id is not None:
+        if self.team_id is None and session.team_id:
             self.team_id = session.team_id
-        if self.user_id is None and session.user_id is not None:
+        if self.user_id is None and session.user_id:
             self.user_id = session.user_id
-        if self.session_id is None and session.session_id is not None:
+        if self.session_id is None and session.session_id:
             self.session_id = session.session_id
-        if session.team_data is not None:
+        if session.team_data:
             if self.name is None and 'name' in session.team_data:
                 self.name = session.team_data.get('name')
-        if session.session_data is not None:
+        if session.session_data:
             if self.session_name is None and 'session_name' in session.session_data:
                 self.session_name = session.session_data.get('session_name')
             if 'session_state' in session.session_data:
                 session_state_from_db = session.session_data.get('session_state')
-                if session_state_from_db is not None and isinstance(session_state_from_db, dict) and len(
+                if session_state_from_db and isinstance(session_state_from_db, dict) and len(
                         session_state_from_db) > 0:
-                    if self.session_state is not None and len(self.session_state) > 0:
+                    if self.session_state and len(self.session_state) > 0:
                         merge_dictionaries(session_state_from_db, self.session_state)
                     self.session_state = session_state_from_db
             if 'images' in session.session_data:
                 images_from_db = session.session_data.get('images')
-                if images_from_db is not None and isinstance(images_from_db, list):
+                if images_from_db and isinstance(images_from_db, list):
                     if self.images is None:
                         self.images = []
                     self.images.extend([ImageArtifact.model_validate(img) for img in images_from_db])
             if 'videos' in session.session_data:
                 videos_from_db = session.session_data.get('videos')
-                if videos_from_db is not None and isinstance(videos_from_db, list):
+                if videos_from_db and isinstance(videos_from_db, list):
                     if self.videos is None:
                         self.videos = []
                     self.videos.extend([VideoArtifact.model_validate(vid) for vid in videos_from_db])
             if 'audio' in session.session_data:
                 audio_from_db = session.session_data.get('audio')
-                if audio_from_db is not None and isinstance(audio_from_db, list):
+                if audio_from_db and isinstance(audio_from_db, list):
                     if self.audio is None:
                         self.audio = []
                     self.audio.extend([AudioArtifact.model_validate(aud) for aud in audio_from_db])
-        if session.extra_data is not None:
-            if self.extra_data is not None:
+        if session.extra_data:
+            if self.extra_data:
                 merge_dictionaries(session.extra_data, self.extra_data)
             self.extra_data = session.extra_data
         if self.memory is None:
@@ -7184,9 +7227,9 @@ class Team:
         if not isinstance(self.memory, TeamMemory):
             if isinstance(self.memory, dict):
                 self.memory = TeamMemory(**self.memory)
-            elif self.memory is not None:
+            elif self.memory:
                 raise TypeError(f'Expected memory to be a dict or TeamMemory, but got {type(self.memory)}')
-        if session.memory is not None and self.memory is not None:
+        if session.memory and self.memory:
             try:
                 if 'runs' in session.memory:
                     try:
@@ -7209,12 +7252,12 @@ class Team:
 
     def _create_run_data(self) -> Dict[str, Any]:
         run_response_format = 'text'
-        if self.response_model is not None:
+        if self.response_model:
             run_response_format = 'json'
         elif self.markdown:
             run_response_format = 'markdown'
         functions = {}
-        if self.model is not None and self.model._functions is not None:
+        if self.model and self.model._functions:
             functions = {f_name: func.to_dict() for f_name, func in self.model._functions.items() if
                          isinstance(func, Function)}
         run_data: Dict[str, Any] = {'functions': functions, 'metrics': self.run_response.metrics}
@@ -7225,32 +7268,32 @@ class Team:
 
     def _get_team_data(self) -> Dict[str, Any]:
         team_data: Dict[str, Any] = {}
-        if self.name is not None:
+        if self.name:
             team_data['name'] = self.name
-        if self.team_id is not None:
+        if self.team_id:
             team_data['team_id'] = self.team_id
-        if self.model is not None:
+        if self.model:
             team_data['model'] = self.model.to_dict()
         return team_data
 
     def _get_session_data(self) -> Dict[str, Any]:
         session_data: Dict[str, Any] = {}
-        if self.session_name is not None:
+        if self.session_name:
             session_data['session_name'] = self.session_name
-        if self.session_state is not None and len(self.session_state) > 0:
+        if self.session_state and len(self.session_state) > 0:
             session_data['session_state'] = self.session_state
-        if self.images is not None:
+        if self.images:
             session_data['images'] = [img.to_dict() for img in self.images]
-        if self.videos is not None:
+        if self.videos:
             session_data['videos'] = [vid.to_dict() for vid in self.videos]
-        if self.audio is not None:
+        if self.audio:
             session_data['audio'] = [aud.to_dict() for aud in self.audio]
         return session_data
 
     def _get_team_session(self) -> AgentSession:
         return AgentSession(mode='team', session_id=self.session_id, agent_id=self.team_id, user_id=self.user_id,
                            agent_session_id=self.team_session_id,
-                           memory=self.memory.to_dict() if self.memory is not None else None,
+                           memory=self.memory.to_dict() if self.memory else None,
                            team_data=self._get_team_data(), session_data=self._get_session_data(),
                            extra_data=self.extra_data, created_at=int(time.time()))
 
@@ -7338,7 +7381,7 @@ class Workflow:
                         item.run_id = self.run_id
                         item.session_id = self.session_id
                         item.workflow_id = self.workflow_id
-                        if item.content is not None and isinstance(item.content, str):
+                        if item.content and isinstance(item.content, str):
                             self.run_response.content += item.content
                     else:
                         print(f'Workflow.run() should only yield RunResponse objects, got: {type(item)}')
@@ -7350,7 +7393,7 @@ class Workflow:
             result.run_id = self.run_id
             result.session_id = self.session_id
             result.workflow_id = self.workflow_id
-            if result.content is not None and isinstance(result.content, str):
+            if result.content and isinstance(result.content, str):
                 self.run_response.content = result.content
             self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
             print(f'*********** Workflow Run End: {self.run_id} ***********')
@@ -7425,73 +7468,73 @@ class Workflow:
 
     def get_workflow_data(self) -> Dict[str, Any]:
         workflow_data: Dict[str, Any] = {}
-        if self.name is not None:
+        if self.name:
             workflow_data['name'] = self.name
-        if self.workflow_id is not None:
+        if self.workflow_id:
             workflow_data['workflow_id'] = self.workflow_id
-        if self.description is not None:
+        if self.description:
             workflow_data['description'] = self.description
         return workflow_data
 
     def get_session_data(self) -> Dict[str, Any]:
         session_data: Dict[str, Any] = {}
-        if self.session_name is not None:
+        if self.session_name:
             session_data['session_name'] = self.session_name
         if self.session_state and len(self.session_state) > 0:
             session_data['session_state'] = self.session_state
-        if self.images is not None:
+        if self.images:
             session_data['images'] = [img.to_dict() for img in self.images]
-        if self.videos is not None:
+        if self.videos:
             session_data['videos'] = [vid.to_dict() for vid in self.videos]
-        if self.audio is not None:
+        if self.audio:
             session_data['audio'] = [aud.to_dict() for aud in self.audio]
         return session_data
 
     def get_workflow_session(self) -> AgentSession:
-        return AgentSession(mode='workflow', session_id=self.session_id, workflow_id=self.workflow_id, user_id=self.user_id, memory=self.memory.to_dict() if self.memory is not None else None, workflow_data=self.get_workflow_data(), session_data=self.get_session_data(), extra_data=self.extra_data)
+        return AgentSession(mode='workflow', session_id=self.session_id, workflow_id=self.workflow_id, user_id=self.user_id, memory=self.memory.to_dict() if self.memory else None, workflow_data=self.get_workflow_data(), session_data=self.get_session_data(), extra_data=self.extra_data)
 
     def load_workflow_session(self, session: AgentSession):
-        if self.workflow_id is None and session.workflow_id is not None:
+        if self.workflow_id is None and session.workflow_id:
             self.workflow_id = session.workflow_id
-        if self.user_id is None and session.user_id is not None:
+        if self.user_id is None and session.user_id:
             self.user_id = session.user_id
-        if self.session_id is None and session.session_id is not None:
+        if self.session_id is None and session.session_id:
             self.session_id = session.session_id
-        if session.workflow_data is not None:
+        if session.workflow_data:
             if self.name is None and 'name' in session.workflow_data:
                 self.name = session.workflow_data.get('name')
-        if session.session_data is not None:
+        if session.session_data:
             if self.session_name is None and 'session_name' in session.session_data:
                 self.session_name = session.session_data.get('session_name')
             if 'session_state' in session.session_data:
                 session_state_from_db = session.session_data.get('session_state')
-                if session_state_from_db is not None and isinstance(session_state_from_db, dict) and len(session_state_from_db) > 0:
+                if session_state_from_db and isinstance(session_state_from_db, dict) and len(session_state_from_db) > 0:
                     if len(self.session_state) > 0:
                         merge_dictionaries(session_state_from_db, self.session_state)
                     self.session_state = session_state_from_db
             if 'images' in session.session_data:
                 images_from_db = session.session_data.get('images')
-                if images_from_db is not None and isinstance(images_from_db, list):
+                if images_from_db and isinstance(images_from_db, list):
                     if self.images is None:
                         self.images = []
                     self.images.extend([ImageArtifact.model_validate(img) for img in images_from_db])
             if 'videos' in session.session_data:
                 videos_from_db = session.session_data.get('videos')
-                if videos_from_db is not None and isinstance(videos_from_db, list):
+                if videos_from_db and isinstance(videos_from_db, list):
                     if self.videos is None:
                         self.videos = []
                     self.videos.extend([VideoArtifact.model_validate(vid) for vid in videos_from_db])
             if 'audio' in session.session_data:
                 audio_from_db = session.session_data.get('audio')
-                if audio_from_db is not None and isinstance(audio_from_db, list):
+                if audio_from_db and isinstance(audio_from_db, list):
                     if self.audio is None:
                         self.audio = []
                     self.audio.extend([AudioArtifact.model_validate(aud) for aud in audio_from_db])
-        if session.extra_data is not None:
-            if self.extra_data is not None:
+        if session.extra_data:
+            if self.extra_data:
                 merge_dictionaries(session.extra_data, self.extra_data)
             self.extra_data = session.extra_data
-        if session.memory is not None:
+        if session.memory:
             if self.memory is None:
                 self.memory = WorkflowMemory()
             try:
@@ -7505,8 +7548,8 @@ class Workflow:
         print(f'-*- agent session loaded: {session.session_id}')
 
     def load_session(self, force: bool = False) -> Optional[str]:
-        if self.workflow_session is not None and not force:
-            if self.session_id is not None and self.workflow_session.session_id == self.session_id:
+        if self.workflow_session and not force:
+            if self.session_id and self.workflow_session.session_id == self.session_id:
                 return self.workflow_session.session_id
         return self.session_id
 
@@ -7563,7 +7606,7 @@ def format_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[str]:
         if 'tool_name' in tool_call and 'tool_args' in tool_call:
             tool_name = tool_call['tool_name']
             args_str = ''
-            if 'tool_args' in tool_call and tool_call['tool_args'] is not None:
+            if 'tool_args' in tool_call and tool_call['tool_args']:
                 args_str = ', '.join(f'{k}={v}' for k, v in tool_call['tool_args'].items())
             formatted_tool_calls.append(f'{tool_name}({args_str})')
     return formatted_tool_calls
@@ -7610,9 +7653,9 @@ def get_text_from_message(message: Union[List, Dict, str, Message]) -> str:
         if 'type' in message[0]:
             for m in message:
                 m_type = m.get('type')
-                if m_type is not None and isinstance(m_type, str):
+                if m_type and isinstance(m_type, str):
                     m_value = m.get(m_type)
-                    if m_value is not None and isinstance(m_value, str):
+                    if m_value and isinstance(m_value, str):
                         if m_type == 'text':
                             text_messages.append(m_value)
                         if m_type == 'image_url':
@@ -7622,9 +7665,9 @@ def get_text_from_message(message: Union[List, Dict, str, Message]) -> str:
         elif 'role' in message[0]:
             for m in message:
                 m_role = m.get('role')
-                if m_role is not None and isinstance(m_role, str):
+                if m_role and isinstance(m_role, str):
                     m_content = m.get('content')
-                    if m_content is not None and isinstance(m_content, str):
+                    if m_content and isinstance(m_content, str):
                         if m_role == 'user':
                             text_messages.append(m_content)
         if len(text_messages) > 0:
@@ -7632,6 +7675,6 @@ def get_text_from_message(message: Union[List, Dict, str, Message]) -> str:
     if isinstance(message, dict):
         if 'content' in message:
             return get_text_from_message(message['content'])
-    if isinstance(message, Message) and message.content is not None:
+    if isinstance(message, Message) and message.content:
         return get_text_from_message(message.content)
     return ''
